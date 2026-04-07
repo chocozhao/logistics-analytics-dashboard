@@ -59,12 +59,12 @@
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
-            <version>0.25.0</version>
+            <version>0.24.0</version>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
-            <version>0.25.0</version>
+            <version>0.24.0</version>
         </dependency>
 
         <!-- Math/Statistics for forecasting -->
