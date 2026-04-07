@@ -30,7 +30,8 @@
       "Bash(pkill -f \"vite\")",
       "Bash(docker:*)",
       "Bash(docker-compose config:*)",
-      "Bash(./scripts/verify-deployment.sh:*)"
+      "Bash(./scripts/verify-deployment.sh:*)",
+      "Bash(git push:*)"
     ]
   }
 }

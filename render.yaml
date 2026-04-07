@@ -3,6 +3,7 @@ services:
     name: logistics-backend
     env: docker
     dockerfilePath: ./backend/Dockerfile
+    buildContext: ./backend
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
