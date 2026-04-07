@@ -1,7 +1,7 @@
 # Backend Dockerfile for Logistics Analytics Dashboard
 # Based on PRD section 12.1
 
-FROM openjdk:17-slim as builder
+FROM eclipse-temurin:17-jdk as builder
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ COPY src src
 RUN ./mvnw clean package -DskipTests
 
 # Runtime stage
-FROM openjdk:17-slim
+FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
