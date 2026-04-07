@@ -24,10 +24,6 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://logistics-backend.onrender.com/api
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
     autoDeploy: true
 
 databases:
