@@ -64,7 +64,7 @@ echo "✅ docker-compose.yml is valid"
 echo "🐳 Checking Dockerfile syntax..."
 
 # Backend Dockerfile
-if ! grep -q "FROM eclipse-temurin:17-jdk" backend/Dockerfile; then
+if ! grep -q "FROM.*eclipse-temurin.*17" backend/Dockerfile; then
     echo "❌ Backend Dockerfile missing Java base image"
     exit 1
 fi

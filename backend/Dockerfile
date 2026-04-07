@@ -1,24 +1,22 @@
 # Backend Dockerfile for Logistics Analytics Dashboard
 # Based on PRD section 12.1
+# Using Maven image for building to avoid maven wrapper issues
 
-FROM eclipse-temurin:17-jdk as builder
+FROM maven:3.8-eclipse-temurin-17 AS builder
 
 WORKDIR /app
 
-# Copy Maven wrapper and pom.xml
-COPY mvnw .
-COPY .mvn .mvn
+# Copy pom.xml first for better layer caching
 COPY pom.xml .
 
 # Download dependencies
-RUN chmod +x mvnw
-RUN ./mvnw dependency:go-offline -B
+RUN mvn dependency:go-offline -B
 
 # Copy source code
 COPY src src
 
 # Build the application
-RUN ./mvnw clean package -DskipTests
+RUN mvn clean package -DskipTests
 
 # Runtime stage
 FROM eclipse-temurin:17-jre

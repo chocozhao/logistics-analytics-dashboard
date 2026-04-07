@@ -31,7 +31,8 @@
       "Bash(docker:*)",
       "Bash(docker-compose config:*)",
       "Bash(./scripts/verify-deployment.sh:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git remote:*)"
     ]
   }
 }
