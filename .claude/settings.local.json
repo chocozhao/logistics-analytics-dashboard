@@ -6,7 +6,31 @@
       "Bash(git commit:*)",
       "Bash(mkdir -p backend/.mvn/wrapper)",
       "Bash(curl -s https://repo.maven.apache.org/maven2/org/apache/maven/wrapper/maven-wrapper/3.2.0/maven-wrapper-3.2.0.jar -o .mvn/wrapper/maven-wrapper.jar)",
-      "Bash(chmod +x:*)"
+      "Bash(chmod +x:*)",
+      "Bash(ls:*)",
+      "Bash(./mvnw compile:*)",
+      "Bash(./mvnw clean:*)",
+      "Bash(mvn compile:*)",
+      "Bash(./mvnw test:*)",
+      "Bash(./mvnw spring-boot:run:*)",
+      "Bash(curl -s http://localhost:8080/api/dashboard/kpis/recent)",
+      "Bash(mvn clean:*)",
+      "Bash(SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run:*)",
+      "Bash(./mvnw dependency:resolve:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(curl -s \"http://localhost:8080/api/dashboard/kpis?startDate=2024-01-01&endDate=2024-02-10\")",
+      "Bash(curl:*)",
+      "Bash(pkill -f \"java.*logistics\")",
+      "Bash(mvn spring-boot:run:*)",
+      "Bash(pkill -9 -f \"java.*logistics\")",
+      "Bash(lsof:*)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(docker:*)",
+      "Bash(docker-compose config:*)",
+      "Bash(./scripts/verify-deployment.sh:*)"
     ]
   }
 }

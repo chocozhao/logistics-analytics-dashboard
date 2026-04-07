@@ -3,7 +3,8 @@ package com.logistics.dashboard.controller;
 import com.logistics.dashboard.dto.*;
 import com.logistics.dashboard.service.DashboardService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,9 +16,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/dashboard")
 @RequiredArgsConstructor
-@Slf4j
 public class DashboardController {
 
+    private static final Logger log = LoggerFactory.getLogger(DashboardController.class);
     private final DashboardService dashboardService;
 
     @GetMapping("/kpis")

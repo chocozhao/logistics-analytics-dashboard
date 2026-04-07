@@ -1,23 +1,24 @@
 package com.logistics.dashboard.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.time.LocalDate;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class TimeSeriesData {
     private LocalDate date;
     private Long count;
+
+    // Constructors
+    public TimeSeriesData() {}
+
+    public TimeSeriesData(LocalDate date, Long count) {
+        this.date = date;
+        this.count = count;
+    }
+
+    // Getters and setters
+    public LocalDate getDate() { return date; }
+    public void setDate(LocalDate date) { this.date = date; }
+
+    public Long getCount() { return count; }
+    public void setCount(Long count) { this.count = count; }
 }
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-class TimeSeriesResponse {
-    private String granularity; // "day", "week", "month"
-    private java.util.List<TimeSeriesData> data;
-}

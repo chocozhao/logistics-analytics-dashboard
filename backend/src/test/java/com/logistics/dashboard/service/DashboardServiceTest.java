@@ -36,10 +36,10 @@ class DashboardServiceTest {
     @Test
     void testGetKPIs() {
         // Arrange
-        when(orderRepository.countOrdersByDateRange(startDate, endDate)).thenReturn(1000L);
-        when(orderRepository.countDeliveredOrdersByDateRange(startDate, endDate)).thenReturn(800L);
-        when(orderRepository.countDelayedOrdersByDateRange(startDate, endDate)).thenReturn(120L);
-        when(orderRepository.averageDeliveryDaysByDateRange(startDate, endDate)).thenReturn(3.5);
+        when(orderRepository.countOrdersByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(1000L);
+        when(orderRepository.countDeliveredOrdersByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(800L);
+        when(orderRepository.countDelayedOrdersByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(120L);
+        when(orderRepository.averageDeliveryDaysByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(3.5);
 
         // Act
         KpiResponse result = dashboardService.getKPIs(startDate, endDate, null, null);
@@ -56,10 +56,10 @@ class DashboardServiceTest {
     @Test
     void testGetKPIs_ZeroOrders() {
         // Arrange
-        when(orderRepository.countOrdersByDateRange(startDate, endDate)).thenReturn(0L);
-        when(orderRepository.countDeliveredOrdersByDateRange(startDate, endDate)).thenReturn(0L);
-        when(orderRepository.countDelayedOrdersByDateRange(startDate, endDate)).thenReturn(0L);
-        when(orderRepository.averageDeliveryDaysByDateRange(startDate, endDate)).thenReturn(null);
+        when(orderRepository.countOrdersByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(0L);
+        when(orderRepository.countDeliveredOrdersByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(0L);
+        when(orderRepository.countDelayedOrdersByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(0L);
+        when(orderRepository.averageDeliveryDaysByDateRangeWithFilters(startDate, endDate, null, null)).thenReturn(null);
 
         // Act
         KpiResponse result = dashboardService.getKPIs(startDate, endDate, null, null);
@@ -80,7 +80,7 @@ class DashboardServiceTest {
         Object[] row2 = new Object[] { java.sql.Date.valueOf("2024-01-02"), 200L };
         List<Object[]> mockResults = Arrays.asList(row1, row2);
 
-        when(orderRepository.getOrderCountByTimePeriod("day", startDate, endDate))
+        when(orderRepository.getOrderCountByTimePeriodWithFilters("day", startDate, endDate, null, null))
                 .thenReturn(mockResults);
 
         // Act
@@ -104,7 +104,7 @@ class DashboardServiceTest {
         Object[] row2 = new Object[] { "FedEx", 300L, 45L };
         List<Object[]> mockResults = Arrays.asList(row1, row2);
 
-        when(orderRepository.getCarrierBreakdown(startDate, endDate))
+        when(orderRepository.getCarrierBreakdownWithFilters(startDate, endDate, null, null))
                 .thenReturn(mockResults);
 
         // Act
@@ -130,6 +130,14 @@ class DashboardServiceTest {
 
     @Test
     void testGetDeliveryPerformance() {
+        // Arrange
+        Object[] row1 = new Object[] { java.sql.Date.valueOf("2024-01-01"), 10L, 2L };
+        Object[] row2 = new Object[] { java.sql.Date.valueOf("2024-01-08"), 12L, 1L };
+        List<Object[]> mockResults = Arrays.asList(row1, row2);
+
+        when(orderRepository.getDeliveryPerformanceByTimePeriod("week", startDate, endDate, null, null))
+                .thenReturn(mockResults);
+
         // Act
         DeliveryPerformanceResponse result = dashboardService.getDeliveryPerformance(
                 "week", startDate, endDate, null, null);
@@ -138,7 +146,6 @@ class DashboardServiceTest {
         assertNotNull(result);
         assertEquals("week", result.getGranularity());
         assertNotNull(result.getData());
-        // Note: Current implementation creates dummy data
         assertTrue(result.getData().size() > 0);
     }
 }

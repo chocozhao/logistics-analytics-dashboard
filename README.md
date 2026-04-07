@@ -52,8 +52,9 @@ A full-stack web application that enables logistics teams to explore freight dat
 - Apache Commons Math (forecasting)
 
 **Deployment:**
-- Docker + Docker Compose
+- Docker + Docker Compose (local)
 - Nginx (frontend serving)
+- Render.com (cloud deployment)
 
 ## Core Principles
 
@@ -117,6 +118,47 @@ docker-compose up db
 # Or manually with PostgreSQL
 psql -U postgres -f database/init.sql
 psql -U reader -d logistics -f database/sample-data.sql
+```
+
+## Deployment to Render.com
+
+This application can be deployed to Render.com for public access:
+
+1. **Push to GitHub**: Fork or push this repository to GitHub
+2. **Sign up for Render**: Create an account at [Render.com](https://render.com)
+3. **Connect GitHub**: Connect your GitHub repository to Render
+4. **Automatic deployment**: Render will automatically detect `render.yaml` and deploy:
+   - Backend service: `logistics-backend`
+   - Frontend service: `logistics-frontend`  
+   - PostgreSQL database: `logistics-db`
+5. **Configure environment variables** in Render dashboard:
+   - `OPENAI_API_KEY`: Your OpenAI API key for natural language queries
+6. **Access your deployed application**:
+   - Frontend: `https://logistics-frontend.onrender.com`
+   - Backend API: `https://logistics-backend.onrender.com/api`
+
+**Note**: The first deployment may take 10-15 minutes to build and deploy all services.
+
+### Manual Database Setup (if needed)
+
+If you need to manually set up the database:
+
+1. Connect to the Render PostgreSQL database using `psql` or pgAdmin
+2. Run the migration script:
+   ```bash
+   psql -h [host] -U [user] -d logistics -f scripts/migrate-to-render.sql
+   ```
+
+### Environment Variables for Production
+
+Create a `.env.production` file with:
+
+```bash
+# Required for production
+OPENAI_API_KEY=your_openai_api_key_here
+SPRING_PROFILES_ACTIVE=prod
+CORS_ALLOWED_ORIGINS=https://logistics-frontend.onrender.com
+VITE_API_URL=https://logistics-backend.onrender.com/api
 ```
 
 ## API Endpoints
