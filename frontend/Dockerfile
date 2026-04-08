@@ -13,8 +13,8 @@ RUN npm ci
 COPY . .
 
 # Set environment variable for API URL
-ARG VITE_API_URL=http://localhost:8080/api
-ENV VITE_API_URL=${VITE_API_URL}
+# Use build-time environment variable with fallback
+ENV VITE_API_URL=${VITE_API_URL:-http://localhost:8080/api}
 
 # Build application
 RUN VITE_API_URL=${VITE_API_URL} npm run build
