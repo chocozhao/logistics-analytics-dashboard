@@ -2,6 +2,7 @@ services:
   - type: web
     name: logistics-backend
     env: docker
+    plan: free
     dockerfilePath: ./backend/Dockerfile
     buildContext: ./backend
     envVars:
@@ -48,6 +49,7 @@ services:
   - type: web
     name: logistics-frontend
     env: docker
+    plan: free
     dockerfilePath: ./frontend/Dockerfile
     envVars:
       - key: VITE_API_URL
