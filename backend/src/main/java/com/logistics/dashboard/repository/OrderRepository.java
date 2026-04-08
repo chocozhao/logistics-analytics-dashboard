@@ -42,25 +42,25 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     // For time series data - PostgreSQL compatible version
     @Query(value = "SELECT " +
-           "CASE :granularity " +
+           "CASE ?1 " +
            "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
            "   WHEN 'week' THEN CAST(DATE_TRUNC('week', o.order_date) AS DATE) " +
            "   WHEN 'month' THEN CAST(DATE_TRUNC('month', o.order_date) AS DATE) " +
            "END as period, " +
            "COUNT(*) as count " +
            "FROM orders o " +
-           "WHERE o.order_date BETWEEN :startDate AND :endDate " +
+           "WHERE o.order_date BETWEEN ?2 AND ?3 " +
            "GROUP BY " +
-           "CASE :granularity " +
+           "CASE ?1 " +
            "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
            "   WHEN 'week' THEN CAST(DATE_TRUNC('week', o.order_date) AS DATE) " +
            "   WHEN 'month' THEN CAST(DATE_TRUNC('month', o.order_date) AS DATE) " +
            "END " +
            "ORDER BY period", nativeQuery = true)
     List<Object[]> getOrderCountByTimePeriod(
-            @Param("granularity") String granularity, // 'day', 'week', 'month'
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate);
+            String granularity, // 'day', 'week', 'month'
+            LocalDate startDate,
+            LocalDate endDate);
 
     // Carrier breakdown
     @Query(value = "SELECT o.carrier, COUNT(*) as total_orders, " +
@@ -158,7 +158,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     // Delivery performance query (on-time vs delayed by time period) - PostgreSQL compatible
     @Query(value = "SELECT " +
-           "CASE :granularity " +
+           "CASE ?1 " +
            "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
            "   WHEN 'week' THEN CAST(DATE_TRUNC('week', o.order_date) AS DATE) " +
            "   WHEN 'month' THEN CAST(DATE_TRUNC('month', o.order_date) AS DATE) " +
@@ -166,20 +166,20 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
            "COUNT(CASE WHEN o.status = 'delivered' AND o.actual_delivery_date <= o.promised_delivery_date THEN 1 END) as on_time, " +
            "COUNT(CASE WHEN o.status = 'delivered' AND o.actual_delivery_date > o.promised_delivery_date THEN 1 END) as delayed " +
            "FROM orders o " +
-           "WHERE o.order_date BETWEEN :startDate AND :endDate " +
-           "AND (:carriers IS NULL OR o.carrier IN (:carriers)) " +
-           "AND (:regions IS NULL OR o.destination_region IN (:regions)) " +
+           "WHERE o.order_date BETWEEN ?2 AND ?3 " +
+           "AND (?4 IS NULL OR o.carrier IN (?4)) " +
+           "AND (?5 IS NULL OR o.destination_region IN (?5)) " +
            "GROUP BY " +
-           "CASE :granularity " +
+           "CASE ?1 " +
            "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
            "   WHEN 'week' THEN CAST(DATE_TRUNC('week', o.order_date) AS DATE) " +
            "   WHEN 'month' THEN CAST(DATE_TRUNC('month', o.order_date) AS DATE) " +
            "END " +
            "ORDER BY period", nativeQuery = true)
     List<Object[]> getDeliveryPerformanceByTimePeriod(
-            @Param("granularity") String granularity,
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate,
-            @Param("carriers") List<String> carriers,
-            @Param("regions") List<String> regions);
+            String granularity,
+            LocalDate startDate,
+            LocalDate endDate,
+            List<String> carriers,
+            List<String> regions);
 }
