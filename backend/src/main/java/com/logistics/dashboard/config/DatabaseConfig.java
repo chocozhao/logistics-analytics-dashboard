@@ -54,6 +54,18 @@ public class DatabaseConfig {
     }
 
     private String getJdbcUrl() {
+        // Debug: print all relevant environment variables
+        System.out.println("=== DatabaseConfig Debug ===");
+        System.out.println("DATABASE_URL: " + (env.getProperty("DATABASE_URL") != null ? "present" : "null"));
+        System.out.println("SPRING_DATASOURCE_HOST: " + env.getProperty("SPRING_DATASOURCE_HOST"));
+        System.out.println("SPRING_DATASOURCE_PORT: " + env.getProperty("SPRING_DATASOURCE_PORT"));
+        System.out.println("SPRING_DATASOURCE_DATABASE: " + env.getProperty("SPRING_DATASOURCE_DATABASE"));
+        System.out.println("SPRING_DATASOURCE_USERNAME: " + env.getProperty("SPRING_DATASOURCE_USERNAME"));
+        System.out.println("SPRING_DATASOURCE_PASSWORD: " + (env.getProperty("SPRING_DATASOURCE_PASSWORD") != null ? "present" : "null"));
+        System.out.println("spring.datasource.url from props: " + env.getProperty("spring.datasource.url"));
+        System.out.println("SPRING_PROFILES_ACTIVE: " + env.getProperty("SPRING_PROFILES_ACTIVE"));
+        System.out.println("===========================");
+
         // Approach 1: Use DATABASE_URL (Render's connectionString) as primary source
         String databaseUrl = env.getProperty("DATABASE_URL");
         if (databaseUrl != null && !databaseUrl.isEmpty()) {
@@ -73,7 +85,14 @@ public class DatabaseConfig {
 
         // Approach 3: Fallback to property from application-prod.properties
         System.out.println("Using fallback JDBC URL from application properties");
-        return env.getProperty("spring.datasource.url", "jdbc:postgresql://localhost:5432/logistics");
+        String fallbackUrl = env.getProperty("spring.datasource.url", "jdbc:postgresql://localhost:5432/logistics");
+        System.out.println("Fallback URL: " + fallbackUrl);
+        // Ensure fallback is in JDBC format
+        if (fallbackUrl != null && !fallbackUrl.isEmpty() && !fallbackUrl.startsWith("jdbc:")) {
+            System.out.println("Converting fallback URL to JDBC format");
+            return convertToJdbcUrl(fallbackUrl);
+        }
+        return fallbackUrl;
     }
 
     private String getUsername() {
