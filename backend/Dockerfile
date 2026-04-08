@@ -23,9 +23,9 @@ FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
-# Copy the built jar from builder stage
-COPY --from=builder /app/target/logistics-analytics-dashboard-*.jar app.jar
-RUN chmod +x app.jar
+# Copy the built jar from builder stage to root directory
+COPY --from=builder /app/target/logistics-analytics-dashboard-*.jar /app.jar
+RUN chmod +x /app.jar
 
 # Create a non-root user to run the application
 RUN groupadd -r spring && useradd -r -g spring spring
