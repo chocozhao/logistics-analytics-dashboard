@@ -7,7 +7,6 @@ import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.service.AiServices;
-import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -82,8 +81,9 @@ public class NLUOrchestrator {
             // Prepare system message with context
             String systemPrompt = createSystemPrompt(request);
 
-            // Get response from AI assistant
-            String aiResponse = assistant.chat(systemPrompt, request.getQuestion());
+            // Get response from AI assistant - combine system prompt and user question
+            String fullMessage = "System: " + systemPrompt + "\n\nUser: " + request.getQuestion();
+            String aiResponse = assistant.chat(fullMessage);
 
             // For now, return a simple response
             // In a full implementation, we would parse the AI's tool calls and execute them
@@ -166,6 +166,6 @@ public class NLUOrchestrator {
      */
     interface AiAssistant {
 
-        String chat(@SystemMessage String systemMessage, @UserMessage String userMessage);
+        String chat(@UserMessage String message);
     }
 }

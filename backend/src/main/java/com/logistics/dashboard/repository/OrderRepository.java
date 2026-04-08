@@ -66,12 +66,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query(value = "SELECT o.carrier, COUNT(*) as total_orders, " +
            "COUNT(CASE WHEN o.status = 'delivered' AND o.actual_delivery_date > o.promised_delivery_date THEN 1 END) as delayed_orders " +
            "FROM orders o " +
-           "WHERE o.order_date BETWEEN :startDate AND :endDate " +
+           "WHERE o.order_date BETWEEN ?1 AND ?2 " +
            "GROUP BY o.carrier " +
            "ORDER BY total_orders DESC", nativeQuery = true)
     List<Object[]> getCarrierBreakdown(
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate);
+            LocalDate startDate, // ?1
+            LocalDate endDate); // ?2
 
     // Filtered count queries for KPIs
     @Query("SELECT COUNT(o) FROM Order o WHERE o.orderDate BETWEEN :startDate AND :endDate " +
@@ -117,44 +117,44 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     // Filtered time series query - PostgreSQL compatible
     @Query(value = "SELECT " +
-           "CASE :granularity " +
+           "CASE ?1 " +
            "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
            "   WHEN 'week' THEN CAST(DATE_TRUNC('week', o.order_date) AS DATE) " +
            "   WHEN 'month' THEN CAST(DATE_TRUNC('month', o.order_date) AS DATE) " +
            "END as period, " +
            "COUNT(*) as count " +
            "FROM orders o " +
-           "WHERE o.order_date BETWEEN :startDate AND :endDate " +
-           "AND (:carriers IS NULL OR o.carrier IN (:carriers)) " +
-           "AND (:regions IS NULL OR o.destination_region IN (:regions)) " +
+           "WHERE o.order_date BETWEEN ?2 AND ?3 " +
+           "AND (?4 IS NULL OR o.carrier IN (?4)) " +
+           "AND (?5 IS NULL OR o.destination_region IN (?5)) " +
            "GROUP BY " +
-           "CASE :granularity " +
+           "CASE ?1 " +
            "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
            "   WHEN 'week' THEN CAST(DATE_TRUNC('week', o.order_date) AS DATE) " +
            "   WHEN 'month' THEN CAST(DATE_TRUNC('month', o.order_date) AS DATE) " +
            "END " +
            "ORDER BY period", nativeQuery = true)
     List<Object[]> getOrderCountByTimePeriodWithFilters(
-            @Param("granularity") String granularity,
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate,
-            @Param("carriers") List<String> carriers,
-            @Param("regions") List<String> regions);
+            String granularity, // ?1
+            LocalDate startDate, // ?2
+            LocalDate endDate, // ?3
+            List<String> carriers, // ?4
+            List<String> regions); // ?5
 
     // Filtered carrier breakdown
     @Query(value = "SELECT o.carrier, COUNT(*) as total_orders, " +
            "COUNT(CASE WHEN o.status = 'delivered' AND o.actual_delivery_date > o.promised_delivery_date THEN 1 END) as delayed_orders " +
            "FROM orders o " +
-           "WHERE o.order_date BETWEEN :startDate AND :endDate " +
-           "AND (:carriers IS NULL OR o.carrier IN (:carriers)) " +
-           "AND (:regions IS NULL OR o.destination_region IN (:regions)) " +
+           "WHERE o.order_date BETWEEN ?1 AND ?2 " +
+           "AND (?3 IS NULL OR o.carrier IN (?3)) " +
+           "AND (?4 IS NULL OR o.destination_region IN (?4)) " +
            "GROUP BY o.carrier " +
            "ORDER BY total_orders DESC", nativeQuery = true)
     List<Object[]> getCarrierBreakdownWithFilters(
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate,
-            @Param("carriers") List<String> carriers,
-            @Param("regions") List<String> regions);
+            LocalDate startDate, // ?1
+            LocalDate endDate, // ?2
+            List<String> carriers, // ?3
+            List<String> regions); // ?4
 
     // Delivery performance query (on-time vs delayed by time period) - PostgreSQL compatible
     @Query(value = "SELECT " +
