@@ -7,6 +7,13 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
+      # Try different approach: Use full JDBC URL
+      - key: DATABASE_URL
+        fromDatabase:
+          name: logistics-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_URL
+        value: jdbc:postgresql://${SPRING_DATASOURCE_HOST}:${SPRING_DATASOURCE_PORT}/${SPRING_DATASOURCE_DATABASE}
       - key: SPRING_DATASOURCE_HOST
         fromDatabase:
           name: logistics-db
