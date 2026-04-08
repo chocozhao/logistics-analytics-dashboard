@@ -34,5 +34,8 @@ USER spring:spring
 # Expose port
 EXPOSE 8080
 
+# Set default active profile (will be overridden by environment variables)
+ENV SPRING_PROFILES_ACTIVE=prod
+
 # Run the application
 ENTRYPOINT ["java", "-jar", "/app.jar"]

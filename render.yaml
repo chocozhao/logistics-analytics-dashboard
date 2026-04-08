@@ -7,12 +7,17 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
-      # Use Render's connection string format
+      # Use Render's connection string format (primary for DatabaseConfig)
       - key: DATABASE_URL
         fromDatabase:
           name: logistics-db
           property: connectionString
-      # Individual properties as fallback (not used directly by DatabaseConfig but good to have)
+      # Also set SPRING_DATASOURCE_URL for application.properties
+      - key: SPRING_DATASOURCE_URL
+        fromDatabase:
+          name: logistics-db
+          property: connectionString
+      # Individual properties as fallback
       - key: SPRING_DATASOURCE_HOST
         fromDatabase:
           name: logistics-db
