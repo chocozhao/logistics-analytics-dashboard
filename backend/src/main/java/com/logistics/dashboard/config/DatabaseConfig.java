@@ -174,9 +174,9 @@ public class DatabaseConfig {
 
     private String convertToJdbcUrl(String databaseUrl) {
         // Convert Render's connection string to JDBC URL
-        // Render format: postgresql://username:password@host:port/database
+        // Render format: postgresql://username:password@host:port/database?sslmode=require
         // or: postgresql://username:password@host/database (no port, default 5432)
-        // We need: jdbc:postgresql://host:port/database
+        // We need: jdbc:postgresql://host:port/database?sslmode=require
 
         System.out.println("===== CONVERTING URL TO JDBC FORMAT =====");
         System.out.println("Original URL: " + databaseUrl.replaceAll(":([^@]+)@", ":***@")); // Hide password
@@ -194,48 +194,29 @@ public class DatabaseConfig {
             return databaseUrl;
         }
 
-        // Render PostgreSQL URL format: postgresql://username:password@host:port/database
-        // or: postgresql://username:password@host/database (default port 5432)
+        // Render PostgreSQL URL format: postgresql://username:password@host:port/database?sslmode=require
         try {
             if (databaseUrl.startsWith("postgresql://")) {
-                // Simple regex approach to extract host, port, and database
                 // Remove postgresql:// prefix
                 String withoutPrefix = databaseUrl.substring("postgresql://".length());
 
                 // Find @ symbol separating credentials from host
                 int atIndex = withoutPrefix.indexOf('@');
-                if (atIndex > 0) {
-                    // Extract host/database part after @
-                    String hostAndDb = withoutPrefix.substring(atIndex + 1);
-
-                    // Handle optional port
-                    String host;
-                    int port = 5432; // Default PostgreSQL port
-                    String database;
-
-                    int colonIndex = hostAndDb.indexOf(':');
-                    int slashIndex = hostAndDb.indexOf('/');
-
-                    if (colonIndex > 0 && colonIndex < slashIndex) {
-                        // Has port: host:port/database
-                        host = hostAndDb.substring(0, colonIndex);
-                        String portStr = hostAndDb.substring(colonIndex + 1, slashIndex);
-                        port = Integer.parseInt(portStr);
-                        database = hostAndDb.substring(slashIndex + 1);
-                    } else {
-                        // No port: host/database
-                        host = hostAndDb.substring(0, slashIndex);
-                        database = hostAndDb.substring(slashIndex + 1);
-                    }
-
-                    String result = String.format("jdbc:postgresql://%s:%d/%s", host, port, database);
-                    System.out.println("Converted URL: " + result);
-                    System.out.println("===== END CONVERSION =====");
-                    return result;
+                if (atIndex <= 0) {
+                    // No @ found, try to parse as direct host/database format
+                    System.out.println("No @ found in URL, trying direct parsing");
+                    return parseHostAndDatabase(withoutPrefix);
                 }
+
+                // Extract host/database part after @
+                String hostAndDb = withoutPrefix.substring(atIndex + 1);
+                System.out.println("Host and database part: " + hostAndDb);
+
+                return parseHostAndDatabase(hostAndDb);
             }
         } catch (Exception e) {
             System.out.println("Error parsing database URL: " + e.getMessage());
+            e.printStackTrace();
         }
 
         // Fallback: just prepend jdbc: prefix
@@ -243,6 +224,74 @@ public class DatabaseConfig {
         String result = "jdbc:" + databaseUrl;
         System.out.println("Converted URL via fallback: " + result);
         System.out.println("===== END CONVERSION =====");
+        return result;
+    }
+
+    private String parseHostAndDatabase(String hostAndDb) {
+        // hostAndDb format: host:port/database?query or host/database?query
+        // Remove query parameters for parsing, then re-add them
+        String queryParams = "";
+        int questionMarkIndex = hostAndDb.indexOf('?');
+        if (questionMarkIndex > 0) {
+            queryParams = hostAndDb.substring(questionMarkIndex);
+            hostAndDb = hostAndDb.substring(0, questionMarkIndex);
+        }
+
+        System.out.println("Host and DB after removing query params: " + hostAndDb);
+
+        // Find slash separating host/port from database
+        int slashIndex = hostAndDb.indexOf('/');
+        if (slashIndex <= 0) {
+            // No database name specified
+            System.out.println("No database name found in URL");
+            String hostPort = hostAndDb;
+            String database = "";
+
+            // Check if hostPort has port
+            int colonIndex = hostPort.indexOf(':');
+            String host;
+            int port = 5432;
+
+            if (colonIndex > 0) {
+                host = hostPort.substring(0, colonIndex);
+                try {
+                    port = Integer.parseInt(hostPort.substring(colonIndex + 1));
+                } catch (NumberFormatException e) {
+                    System.out.println("Invalid port number, using default 5432");
+                }
+            } else {
+                host = hostPort;
+            }
+
+            String result = String.format("jdbc:postgresql://%s:%d/%s%s", host, port, database, queryParams);
+            System.out.println("Converted URL (no db name): " + result);
+            return result;
+        }
+
+        // Extract host/port and database
+        String hostPort = hostAndDb.substring(0, slashIndex);
+        String database = hostAndDb.substring(slashIndex + 1);
+
+        System.out.println("Host/port: " + hostPort + ", Database: " + database);
+
+        // Parse host and port
+        String host;
+        int port = 5432; // Default PostgreSQL port
+
+        int colonIndex = hostPort.indexOf(':');
+        if (colonIndex > 0) {
+            host = hostPort.substring(0, colonIndex);
+            try {
+                port = Integer.parseInt(hostPort.substring(colonIndex + 1));
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid port number, using default 5432");
+            }
+        } else {
+            host = hostPort;
+        }
+
+        String result = String.format("jdbc:postgresql://%s:%d/%s%s", host, port, database, queryParams);
+        System.out.println("Converted URL: " + result);
         return result;
     }
 }
