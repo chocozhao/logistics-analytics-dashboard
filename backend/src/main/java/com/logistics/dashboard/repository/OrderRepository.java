@@ -34,11 +34,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
            "AND o.orderDate BETWEEN :startDate AND :endDate")
     Long countDelayedOrdersByDateRange(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-    @Query("SELECT AVG(EXTRACT(DAY FROM (o.actualDeliveryDate - o.orderDate))) " +
-           "FROM Order o WHERE o.status = 'delivered' " +
-           "AND o.actualDeliveryDate IS NOT NULL " +
-           "AND o.orderDate BETWEEN :startDate AND :endDate")
-    Double averageDeliveryDaysByDateRange(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    @Query(value = "SELECT AVG(EXTRACT(DAY FROM (o.actual_delivery_date - o.order_date))) " +
+           "FROM orders o WHERE o.status = 'delivered' " +
+           "AND o.actual_delivery_date IS NOT NULL " +
+           "AND o.order_date BETWEEN ?1 AND ?2", nativeQuery = true)
+    Double averageDeliveryDaysByDateRange(LocalDate startDate, LocalDate endDate);
 
     // For time series data - PostgreSQL compatible version
     @Query(value = "SELECT " +
@@ -103,17 +103,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("carriers") List<String> carriers,
             @Param("regions") List<String> regions);
 
-    @Query("SELECT AVG(EXTRACT(DAY FROM (o.actualDeliveryDate - o.orderDate))) " +
-           "FROM Order o WHERE o.status = 'delivered' " +
-           "AND o.actualDeliveryDate IS NOT NULL " +
-           "AND o.orderDate BETWEEN :startDate AND :endDate " +
-           "AND (:carriers IS NULL OR o.carrier IN :carriers) " +
-           "AND (:regions IS NULL OR o.destinationRegion IN :regions)")
+    @Query(value = "SELECT AVG(EXTRACT(DAY FROM (o.actual_delivery_date - o.order_date))) " +
+           "FROM orders o WHERE o.status = 'delivered' " +
+           "AND o.actual_delivery_date IS NOT NULL " +
+           "AND o.order_date BETWEEN ?1 AND ?2 " +
+           "AND (?3 IS NULL OR o.carrier IN (?3)) " +
+           "AND (?4 IS NULL OR o.destination_region IN (?4))", nativeQuery = true)
     Double averageDeliveryDaysByDateRangeWithFilters(
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate,
-            @Param("carriers") List<String> carriers,
-            @Param("regions") List<String> regions);
+            LocalDate startDate,
+            LocalDate endDate,
+            List<String> carriers,
+            List<String> regions);
 
     // Filtered time series query - PostgreSQL compatible
     @Query(value = "SELECT " +
