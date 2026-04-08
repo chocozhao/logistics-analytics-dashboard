@@ -15,8 +15,8 @@ RUN mvn dependency:resolve -B
 # Copy source code
 COPY src src
 
-# Build the application with verbose error output and debug logging
-RUN mvn clean package -DskipTests -X 2>&1 | tail -200
+# Build the application
+RUN mvn clean package -DskipTests && ls -la /app/target/*.jar
 
 # Runtime stage
 FROM eclipse-temurin:17-jre
@@ -24,7 +24,8 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 # Copy the built jar from builder stage
-COPY --from=builder /app/target/*.jar app.jar
+COPY --from=builder /app/target/logistics-analytics-dashboard-*.jar app.jar
+RUN chmod +x app.jar
 
 # Create a non-root user to run the application
 RUN groupadd -r spring && useradd -r -g spring spring

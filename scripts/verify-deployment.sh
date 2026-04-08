@@ -69,7 +69,7 @@ if ! grep -q "FROM.*eclipse-temurin.*17" backend/Dockerfile; then
     exit 1
 fi
 
-if ! grep -q "COPY --from=builder /app/target/\*.jar app.jar" backend/Dockerfile; then
+if ! grep -q "COPY --from=builder /app/target/logistics-analytics-dashboard-\*.jar app.jar" backend/Dockerfile; then
     echo "⚠️  Backend Dockerfile may not copy JAR correctly"
 fi
 
