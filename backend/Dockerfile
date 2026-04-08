@@ -15,8 +15,8 @@ RUN mvn dependency:resolve -B
 # Copy source code
 COPY src src
 
-# Build the application with verbose error output
-RUN mvn clean package -DskipTests -e
+# Build the application with verbose error output and debug logging
+RUN mvn clean package -DskipTests -X 2>&1 | tail -200
 
 # Runtime stage
 FROM eclipse-temurin:17-jre

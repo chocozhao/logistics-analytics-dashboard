@@ -276,6 +276,16 @@ public class ForecastingService {
     }
 
     /**
+     * Calculate safety stock recommendation (forecast * 1.2)
+     */
+    public BigDecimal calculateSafetyStockRecommendation(BigDecimal forecastValue) {
+        if (forecastValue == null || forecastValue.compareTo(BigDecimal.ZERO) == 0) {
+            return BigDecimal.ZERO;
+        }
+        return forecastValue.multiply(new BigDecimal("1.20"));
+    }
+
+    /**
      * Helper class to store forecast results
      */
     private static class ForecastResult {
