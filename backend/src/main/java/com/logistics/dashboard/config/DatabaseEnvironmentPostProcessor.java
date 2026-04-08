@@ -6,6 +6,11 @@ import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.MutablePropertySources;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.HashMap;
+import java.util.Map;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -35,49 +40,115 @@ public class DatabaseEnvironmentPostProcessor implements EnvironmentPostProcesso
         System.out.println("=== DatabaseEnvironmentPostProcessor ===");
         System.out.println("Processing environment variables for database URLs");
 
-        // Check and convert DATABASE_URL if present
-        String databaseUrl = environment.getProperty(DATABASE_URL_KEY);
-        if (databaseUrl != null && !databaseUrl.isEmpty()) {
-            System.out.println("Found DATABASE_URL: " + maskPassword(databaseUrl));
-            String convertedUrl = convertToJdbcUrl(databaseUrl);
-            if (!convertedUrl.equals(databaseUrl)) {
-                System.out.println("Converted DATABASE_URL to: " + maskPassword(convertedUrl));
-                addProperty(environment, DATABASE_URL_KEY, convertedUrl);
-            }
-        } else {
-            System.out.println("DATABASE_URL not set");
-        }
+        // Process DATABASE_URL if present (Render's primary format)
+        processDatabaseUrl(environment, DATABASE_URL_KEY);
 
-        // Check and convert SPRING_DATASOURCE_URL if present
-        String springDatasourceUrl = environment.getProperty(SPRING_DATASOURCE_URL_KEY);
-        if (springDatasourceUrl != null && !springDatasourceUrl.isEmpty()) {
-            System.out.println("Found SPRING_DATASOURCE_URL: " + maskPassword(springDatasourceUrl));
-            String convertedUrl = convertToJdbcUrl(springDatasourceUrl);
-            if (!convertedUrl.equals(springDatasourceUrl)) {
-                System.out.println("Converted SPRING_DATASOURCE_URL to: " + maskPassword(convertedUrl));
-                addProperty(environment, SPRING_DATASOURCE_URL_KEY, convertedUrl);
-                // Also update spring.datasource.url property since Spring Boot will read this
-                addProperty(environment, SPRING_DATASOURCE_URL_PROPERTY, convertedUrl);
-            }
-        } else {
-            System.out.println("SPRING_DATASOURCE_URL not set");
-        }
+        // Process SPRING_DATASOURCE_URL if present (Render's alternative)
+        processDatabaseUrl(environment, SPRING_DATASOURCE_URL_KEY);
 
-        // Ensure spring.datasource.url is also in JDBC format
-        String springDatasourceUrlProperty = environment.getProperty(SPRING_DATASOURCE_URL_PROPERTY);
-        if (springDatasourceUrlProperty != null && !springDatasourceUrlProperty.isEmpty()) {
-            System.out.println("Found spring.datasource.url property: " + maskPassword(springDatasourceUrlProperty));
-            String convertedUrl = convertToJdbcUrl(springDatasourceUrlProperty);
-            if (!convertedUrl.equals(springDatasourceUrlProperty)) {
-                System.out.println("Converted spring.datasource.url to: " + maskPassword(convertedUrl));
-                addProperty(environment, SPRING_DATASOURCE_URL_PROPERTY, convertedUrl);
-            }
-        }
+        // Also process spring.datasource.url property
+        processDatabaseUrl(environment, SPRING_DATASOURCE_URL_PROPERTY);
 
         System.out.println("=== End DatabaseEnvironmentPostProcessor ===");
     }
 
-    private String convertToJdbcUrl(String url) {
+    private void processDatabaseUrl(ConfigurableEnvironment environment, String urlKey) {
+        String url = environment.getProperty(urlKey);
+        if (url == null || url.isEmpty()) {
+            System.out.println(urlKey + " not set");
+            return;
+        }
+
+        System.out.println("Found " + urlKey + ": " + maskPassword(url));
+
+        try {
+            // Parse the connection string
+            ParsedConnection parsed = parseConnectionString(url);
+
+            // Build properties map
+            Map<String, Object> properties = new HashMap<>();
+
+            // Set the JDBC URL (without username/password in URL)
+            String jdbcUrl = String.format("jdbc:postgresql://%s:%d/%s",
+                parsed.host, parsed.port, parsed.database);
+            System.out.println("Setting spring.datasource.url to: " + jdbcUrl);
+            properties.put("spring.datasource.url", jdbcUrl);
+
+            // Set username and password as separate properties
+            System.out.println("Setting spring.datasource.username to: " + parsed.username);
+            properties.put("spring.datasource.username", parsed.username);
+            properties.put("spring.datasource.password", parsed.password);
+
+            // Also set uppercase versions for compatibility
+            properties.put("SPRING_DATASOURCE_URL", jdbcUrl);
+            properties.put("SPRING_DATASOURCE_USERNAME", parsed.username);
+            properties.put("SPRING_DATASOURCE_PASSWORD", parsed.password);
+
+            // Add properties to environment
+            addProperties(environment, properties);
+
+        } catch (Exception e) {
+            System.out.println("Error parsing " + urlKey + ": " + e.getMessage());
+            // Fallback: just convert to JDBC format
+            String convertedUrl = ensureJdbcPrefix(url);
+            if (!convertedUrl.equals(url)) {
+                System.out.println("Fallback conversion for " + urlKey + " to: " + maskPassword(convertedUrl));
+                addProperty(environment, urlKey, convertedUrl);
+                if (urlKey.equals(SPRING_DATASOURCE_URL_KEY) || urlKey.equals(DATABASE_URL_KEY)) {
+                    addProperty(environment, SPRING_DATASOURCE_URL_PROPERTY, convertedUrl);
+                }
+            }
+        }
+    }
+
+    private ParsedConnection parseConnectionString(String url) throws URISyntaxException {
+        ParsedConnection result = new ParsedConnection();
+
+        // Ensure URL is in URI-parsable format
+        String uriString = url;
+        if (url.startsWith("postgresql://")) {
+            uriString = "http://" + url.substring("postgresql://".length());
+        } else if (url.startsWith("jdbc:postgresql://")) {
+            uriString = "http://" + url.substring("jdbc:postgresql://".length());
+        }
+
+        URI uri = new URI(uriString);
+
+        // Extract username and password
+        String userInfo = uri.getUserInfo();
+        if (userInfo != null) {
+            String[] parts = userInfo.split(":");
+            result.username = parts[0];
+            result.password = parts.length > 1 ? parts[1] : "";
+        } else {
+            result.username = "";
+            result.password = "";
+        }
+
+        // Extract host and port
+        result.host = uri.getHost();
+        result.port = uri.getPort() > 0 ? uri.getPort() : 5432; // Default PostgreSQL port
+
+        // Extract database name
+        String path = uri.getPath();
+        if (path != null && path.startsWith("/")) {
+            result.database = path.substring(1);
+        } else {
+            result.database = "";
+        }
+
+        return result;
+    }
+
+    private static class ParsedConnection {
+        String host;
+        int port;
+        String database;
+        String username;
+        String password;
+    }
+
+    private String ensureJdbcPrefix(String url) {
         if (url == null || url.isEmpty()) {
             return url;
         }
@@ -93,19 +164,18 @@ public class DatabaseEnvironmentPostProcessor implements EnvironmentPostProcesso
         }
 
         // For any other URL that doesn't start with "jdbc:", prepend it
-        // This handles edge cases
         return "jdbc:" + url;
     }
 
     private void addProperty(ConfigurableEnvironment environment, String key, String value) {
-        MutablePropertySources propertySources = environment.getPropertySources();
-
-        // Create a new property source with our converted value
         Map<String, Object> map = new HashMap<>();
         map.put(key, value);
+        addProperties(environment, map);
+    }
 
-        // Add it with highest priority so our converted value takes precedence
-        propertySources.addFirst(new MapPropertySource("databaseUrlFix", map));
+    private void addProperties(ConfigurableEnvironment environment, Map<String, Object> properties) {
+        MutablePropertySources propertySources = environment.getPropertySources();
+        propertySources.addFirst(new MapPropertySource("databaseConfig", properties));
     }
 
     private String maskPassword(String url) {

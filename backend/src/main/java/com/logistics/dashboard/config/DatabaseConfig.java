@@ -1,9 +1,9 @@
 package com.logistics.dashboard.config;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 import com.zaxxer.hikari.HikariDataSource;
 
@@ -21,34 +21,32 @@ public class DatabaseConfig {
     }
 
     @Bean
-    @Primary
+    @ConditionalOnMissingBean(DataSource.class)
     @ConfigurationProperties(prefix = "spring.datasource.hikari")
     public DataSource dataSource() {
         HikariDataSource dataSource = new HikariDataSource();
 
-        // Try multiple approaches to get database URL
-        String jdbcUrl = getJdbcUrl();
-        String username = getUsername();
-        String password = getPassword();
-
         // Log the configuration (using System.out since logging might not be initialized yet)
-        System.out.println("=== DatabaseConfig ===");
-        System.out.println("JDBC URL: " + jdbcUrl.replace(password, "***")); // Hide password in logs
-        System.out.println("Username: " + username);
-        System.out.println("Password: ***");
-        System.out.println("======================");
+        System.out.println("=== DatabaseConfig - Creating DataSource ===");
 
-        dataSource.setJdbcUrl(jdbcUrl);
-        dataSource.setUsername(username);
-        dataSource.setPassword(password);
+        // Let Spring Boot auto-configure the basic properties
+        // We just need to set Hikari-specific properties
         dataSource.setDriverClassName("org.postgresql.Driver");
 
-        // Set connection pool properties
+        // Set connection pool properties (can also be set in application-prod.properties)
         dataSource.setMaximumPoolSize(10);
         dataSource.setMinimumIdle(5);
         dataSource.setConnectionTimeout(30000);
         dataSource.setIdleTimeout(600000);
         dataSource.setMaxLifetime(1800000);
+
+        // Log final configuration
+        System.out.println("DataSource configured with:");
+        System.out.println("Driver: " + dataSource.getDriverClassName());
+        System.out.println("Max Pool Size: " + dataSource.getMaximumPoolSize());
+        System.out.println("Min Idle: " + dataSource.getMinimumIdle());
+        System.out.println("Connection Timeout: " + dataSource.getConnectionTimeout());
+        System.out.println("======================");
 
         return dataSource;
     }
@@ -58,70 +56,47 @@ public class DatabaseConfig {
         System.out.println("===== DATABASE CONFIG DEBUG START =====");
         System.out.println("SPRING_PROFILES_ACTIVE: " + env.getProperty("SPRING_PROFILES_ACTIVE"));
         System.out.println("Active profiles (spring.profiles.active): " + env.getProperty("spring.profiles.active"));
+
+        // Check all possible database URL sources
         System.out.println("DATABASE_URL: " + (env.getProperty("DATABASE_URL") != null ? "SET" : "NOT SET"));
         if (env.getProperty("DATABASE_URL") != null) {
             System.out.println("DATABASE_URL value: " + env.getProperty("DATABASE_URL").replaceAll(":([^@]+)@", ":***@"));
         }
+
+        System.out.println("SPRING_DATASOURCE_URL: " + (env.getProperty("SPRING_DATASOURCE_URL") != null ? "SET" : "NOT SET"));
+        if (env.getProperty("SPRING_DATASOURCE_URL") != null) {
+            System.out.println("SPRING_DATASOURCE_URL value: " + env.getProperty("SPRING_DATASOURCE_URL").replaceAll(":([^@]+)@", ":***@"));
+        }
+
+        System.out.println("spring.datasource.url: " + (env.getProperty("spring.datasource.url") != null ? "SET" : "NOT SET"));
+        if (env.getProperty("spring.datasource.url") != null) {
+            System.out.println("spring.datasource.url value: " + env.getProperty("spring.datasource.url").replaceAll(":([^@]+)@", ":***@"));
+        }
+
+        System.out.println("SPRING_DATASOURCE_HOST: " + env.getProperty("SPRING_DATASOURCE_HOST"));
+        System.out.println("SPRING_DATASOURCE_PORT: " + env.getProperty("SPRING_DATASOURCE_PORT"));
+        System.out.println("SPRING_DATASOURCE_DATABASE: " + env.getProperty("SPRING_DATASOURCE_DATABASE"));
         System.out.println("===== DATABASE CONFIG DEBUG END =====");
 
-        // Primary source: DATABASE_URL from Render
+        // Priority 1: DATABASE_URL from Render (highest priority)
         String databaseUrl = env.getProperty("DATABASE_URL");
         if (databaseUrl != null && !databaseUrl.isEmpty()) {
             System.out.println("===== USING DATABASE_URL ENVIRONMENT VARIABLE =====");
-            System.out.println("Original DATABASE_URL: " + databaseUrl.replaceAll(":([^@]+)@", ":***@"));
+            return convertToJdbcUrl(databaseUrl);
+        }
 
-            // Simple conversion: replace postgresql:// with jdbc:postgresql://
-            // and remove username:password@ part
-            if (databaseUrl.startsWith("postgresql://")) {
-                try {
-                    // Extract everything after @
-                    int atIndex = databaseUrl.indexOf('@');
-                    if (atIndex > 0) {
-                        String afterAt = databaseUrl.substring(atIndex + 1);
-                        // Find the first / after @ to separate host:port from database
-                        int slashIndex = afterAt.indexOf('/');
-                        if (slashIndex > 0) {
-                            String hostPort = afterAt.substring(0, slashIndex);
-                            String dbPath = afterAt.substring(slashIndex);
+        // Priority 2: SPRING_DATASOURCE_URL from Render
+        databaseUrl = env.getProperty("SPRING_DATASOURCE_URL");
+        if (databaseUrl != null && !databaseUrl.isEmpty()) {
+            System.out.println("===== USING SPRING_DATASOURCE_URL ENVIRONMENT VARIABLE =====");
+            return convertToJdbcUrl(databaseUrl);
+        }
 
-                            // Check if hostPort contains port
-                            String host;
-                            int port = 5432;
-                            int colonIndex = hostPort.indexOf(':');
-                            if (colonIndex > 0) {
-                                host = hostPort.substring(0, colonIndex);
-                                try {
-                                    port = Integer.parseInt(hostPort.substring(colonIndex + 1));
-                                } catch (NumberFormatException e) {
-                                    System.out.println("Invalid port, using default 5432");
-                                }
-                            } else {
-                                host = hostPort;
-                            }
-
-                            String jdbcUrl = String.format("jdbc:postgresql://%s:%d%s", host, port, dbPath);
-                            System.out.println("Converted JDBC URL: " + jdbcUrl);
-                            System.out.println("===== END DATABASE_URL PROCESSING =====");
-                            return jdbcUrl;
-                        }
-                    }
-                } catch (Exception e) {
-                    System.out.println("Error parsing DATABASE_URL: " + e.getMessage());
-                    // Fall through to simpler conversion
-                }
-
-                // Simpler fallback: just replace postgresql:// with jdbc:postgresql://
-                String jdbcUrl = databaseUrl.replace("postgresql://", "jdbc:postgresql://");
-                System.out.println("Simpler conversion JDBC URL: " + jdbcUrl);
-                System.out.println("===== END DATABASE_URL PROCESSING =====");
-                return jdbcUrl;
-            }
-
-            // If not postgresql://, just prepend jdbc:
-            String jdbcUrl = "jdbc:" + databaseUrl;
-            System.out.println("JDBC URL with prefix: " + jdbcUrl);
-            System.out.println("===== END DATABASE_URL PROCESSING =====");
-            return jdbcUrl;
+        // Priority 3: spring.datasource.url from application properties
+        databaseUrl = env.getProperty("spring.datasource.url");
+        if (databaseUrl != null && !databaseUrl.isEmpty()) {
+            System.out.println("===== USING SPRING.DATASOURCE.URL PROPERTY =====");
+            return convertToJdbcUrl(databaseUrl);
         }
 
         // Fallback: use individual components
