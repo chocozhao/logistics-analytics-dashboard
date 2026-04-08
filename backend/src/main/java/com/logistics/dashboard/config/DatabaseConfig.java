@@ -62,33 +62,74 @@ public class DatabaseConfig {
         if (env.getProperty("DATABASE_URL") != null) {
             System.out.println("DATABASE_URL value: " + env.getProperty("DATABASE_URL").replaceAll(":([^@]+)@", ":***@"));
         }
-        System.out.println("SPRING_DATASOURCE_HOST: " + env.getProperty("SPRING_DATASOURCE_HOST"));
-        System.out.println("SPRING_DATASOURCE_PORT: " + env.getProperty("SPRING_DATASOURCE_PORT"));
-        System.out.println("SPRING_DATASOURCE_DATABASE: " + env.getProperty("SPRING_DATASOURCE_DATABASE"));
-        System.out.println("SPRING_DATASOURCE_USERNAME: " + env.getProperty("SPRING_DATASOURCE_USERNAME"));
-        System.out.println("SPRING_DATASOURCE_PASSWORD: " + (env.getProperty("SPRING_DATASOURCE_PASSWORD") != null ? "SET" : "NOT SET"));
-        System.out.println("spring.datasource.url: " + env.getProperty("spring.datasource.url"));
-        System.out.println("spring.datasource.username: " + env.getProperty("spring.datasource.username"));
-        System.out.println("spring.datasource.password: " + (env.getProperty("spring.datasource.password") != null ? "SET" : "NOT SET"));
         System.out.println("===== DATABASE CONFIG DEBUG END =====");
 
-        // Approach 1: Use DATABASE_URL (Render's connectionString) as primary source
+        // Primary source: DATABASE_URL from Render
         String databaseUrl = env.getProperty("DATABASE_URL");
         if (databaseUrl != null && !databaseUrl.isEmpty()) {
             System.out.println("===== USING DATABASE_URL ENVIRONMENT VARIABLE =====");
             System.out.println("Original DATABASE_URL: " + databaseUrl.replaceAll(":([^@]+)@", ":***@"));
-            String jdbcUrl = convertToJdbcUrl(databaseUrl);
-            System.out.println("Converted to JDBC URL: " + jdbcUrl);
+
+            // Simple conversion: replace postgresql:// with jdbc:postgresql://
+            // and remove username:password@ part
+            if (databaseUrl.startsWith("postgresql://")) {
+                try {
+                    // Extract everything after @
+                    int atIndex = databaseUrl.indexOf('@');
+                    if (atIndex > 0) {
+                        String afterAt = databaseUrl.substring(atIndex + 1);
+                        // Find the first / after @ to separate host:port from database
+                        int slashIndex = afterAt.indexOf('/');
+                        if (slashIndex > 0) {
+                            String hostPort = afterAt.substring(0, slashIndex);
+                            String dbPath = afterAt.substring(slashIndex);
+
+                            // Check if hostPort contains port
+                            String host;
+                            int port = 5432;
+                            int colonIndex = hostPort.indexOf(':');
+                            if (colonIndex > 0) {
+                                host = hostPort.substring(0, colonIndex);
+                                try {
+                                    port = Integer.parseInt(hostPort.substring(colonIndex + 1));
+                                } catch (NumberFormatException e) {
+                                    System.out.println("Invalid port, using default 5432");
+                                }
+                            } else {
+                                host = hostPort;
+                            }
+
+                            String jdbcUrl = String.format("jdbc:postgresql://%s:%d%s", host, port, dbPath);
+                            System.out.println("Converted JDBC URL: " + jdbcUrl);
+                            System.out.println("===== END DATABASE_URL PROCESSING =====");
+                            return jdbcUrl;
+                        }
+                    }
+                } catch (Exception e) {
+                    System.out.println("Error parsing DATABASE_URL: " + e.getMessage());
+                    // Fall through to simpler conversion
+                }
+
+                // Simpler fallback: just replace postgresql:// with jdbc:postgresql://
+                String jdbcUrl = databaseUrl.replace("postgresql://", "jdbc:postgresql://");
+                System.out.println("Simpler conversion JDBC URL: " + jdbcUrl);
+                System.out.println("===== END DATABASE_URL PROCESSING =====");
+                return jdbcUrl;
+            }
+
+            // If not postgresql://, just prepend jdbc:
+            String jdbcUrl = "jdbc:" + databaseUrl;
+            System.out.println("JDBC URL with prefix: " + jdbcUrl);
             System.out.println("===== END DATABASE_URL PROCESSING =====");
             return jdbcUrl;
         }
 
-        // Approach 2: Build from individual components (host, port, database)
+        // Fallback: use individual components
         String host = env.getProperty("SPRING_DATASOURCE_HOST");
-        String port = env.getProperty("SPRING_DATASOURCE_PORT");
+        String port = env.getProperty("SPRING_DATASOURCE_PORT", "5432");
         String database = env.getProperty("SPRING_DATASOURCE_DATABASE");
 
-        if (host != null && port != null && database != null) {
+        if (host != null && database != null) {
             System.out.println("===== BUILDING JDBC URL FROM INDIVIDUAL COMPONENTS =====");
             String jdbcUrl = String.format("jdbc:postgresql://%s:%s/%s", host, port, database);
             System.out.println("Built JDBC URL: " + jdbcUrl);
@@ -96,31 +137,11 @@ public class DatabaseConfig {
             return jdbcUrl;
         }
 
-        // Approach 3: Fallback to property from application-prod.properties
+        // Final fallback: from application properties
         System.out.println("===== USING FALLBACK FROM APPLICATION PROPERTIES =====");
         String fallbackUrl = env.getProperty("spring.datasource.url", "jdbc:postgresql://localhost:5432/logistics");
-        System.out.println("Fallback URL from properties: " + fallbackUrl);
-
-        // Ensure fallback is in JDBC format
-        if (fallbackUrl != null && !fallbackUrl.isEmpty() && !fallbackUrl.startsWith("jdbc:")) {
-            System.out.println("Converting fallback URL to JDBC format");
-            String jdbcUrl = convertToJdbcUrl(fallbackUrl);
-            System.out.println("Converted fallback URL: " + jdbcUrl);
-            System.out.println("===== END FALLBACK PROCESSING =====");
-            return jdbcUrl;
-        }
-
-        // Final safety check: ensure URL is JDBC format
-        if (fallbackUrl != null && !fallbackUrl.startsWith("jdbc:")) {
-            System.out.println("WARNING: Fallback URL is not JDBC format, forcing conversion");
-            String jdbcUrl = convertToJdbcUrl(fallbackUrl);
-            System.out.println("Forced conversion result: " + jdbcUrl);
-            System.out.println("===== END SAFETY CHECK =====");
-            return jdbcUrl;
-        }
-
-        System.out.println("Using final fallback URL: " + fallbackUrl);
-        System.out.println("===== END ALL PROCESSING =====");
+        System.out.println("Fallback URL: " + fallbackUrl);
+        System.out.println("===== END FALLBACK PROCESSING =====");
         return fallbackUrl;
     }
 
