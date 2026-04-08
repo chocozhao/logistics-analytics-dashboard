@@ -24,28 +24,36 @@ public class NLUOrchestrator {
     private final AiTools aiTools;
 
     public NLUOrchestrator(
-            @Value("${openai.api.key}") String apiKey,
+            @Value("${openai.api.key:}") String apiKey,
             AiTools aiTools) {
 
         this.aiTools = aiTools;
 
-        // Create chat model with OpenAI
-        this.model = dev.langchain4j.model.openai.OpenAiChatModel.builder()
-                .apiKey(apiKey)
-                .modelName("gpt-3.5-turbo")
-                .temperature(0.1)
-                .maxTokens(500)
-                .build();
+        // Check if API key is provided
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            System.out.println("WARNING: OPENAI_API_KEY not provided. Natural Language Query functionality will be limited.");
+            // Create a mock model that returns placeholder responses
+            this.model = null;
+            this.assistant = null;
+        } else {
+            // Create chat model with OpenAI
+            this.model = dev.langchain4j.model.openai.OpenAiChatModel.builder()
+                    .apiKey(apiKey)
+                    .modelName("gpt-3.5-turbo")
+                    .temperature(0.1)
+                    .maxTokens(500)
+                    .build();
 
-        // Create chat memory
-        ChatMemory chatMemory = MessageWindowChatMemory.withMaxMessages(10);
+            // Create chat memory
+            ChatMemory chatMemory = MessageWindowChatMemory.withMaxMessages(10);
 
-        // Create AI assistant with tool support
-        this.assistant = AiServices.builder(AiAssistant.class)
-                .chatLanguageModel(model)
-                .chatMemory(chatMemory)
-                .tools(aiTools)
-                .build();
+            // Create AI assistant with tool support
+            this.assistant = AiServices.builder(AiAssistant.class)
+                    .chatLanguageModel(model)
+                    .chatMemory(chatMemory)
+                    .tools(aiTools)
+                    .build();
+        }
     }
 
     /**
@@ -53,6 +61,24 @@ public class NLUOrchestrator {
      */
     public QueryResponse processQuery(QueryRequest request) {
         try {
+            // Check if AI model is available
+            if (model == null || assistant == null) {
+                QueryResponse placeholderResponse = new QueryResponse();
+                placeholderResponse.setAnswer("Natural Language Query functionality requires an OpenAI API key to be configured. Please set the OPENAI_API_KEY environment variable.");
+                placeholderResponse.setExplanation("This feature uses OpenAI's GPT model to interpret natural language questions about logistics data.");
+                placeholderResponse.setChartType("none");
+
+                // You can still use other dashboard features without OpenAI
+                if (request.getQuestion() != null && !request.getQuestion().isEmpty()) {
+                    String question = request.getQuestion().toLowerCase();
+                    if (question.contains("order") || question.contains("delivery") || question.contains("carrier")) {
+                        placeholderResponse.setAnswer("Natural language queries are currently unavailable. Please use the dashboard's standard analytics features for order, delivery, and carrier data analysis.");
+                    }
+                }
+
+                return placeholderResponse;
+            }
+
             // Prepare system message with context
             String systemPrompt = createSystemPrompt(request);
 
