@@ -34,27 +34,27 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
            "AND o.orderDate BETWEEN :startDate AND :endDate")
     Long countDelayedOrdersByDateRange(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-    @Query("SELECT AVG(DATEDIFF(day, o.orderDate, o.actualDeliveryDate)) " +
+    @Query("SELECT AVG(EXTRACT(DAY FROM (o.actualDeliveryDate - o.orderDate))) " +
            "FROM Order o WHERE o.status = 'delivered' " +
            "AND o.actualDeliveryDate IS NOT NULL " +
            "AND o.orderDate BETWEEN :startDate AND :endDate")
     Double averageDeliveryDaysByDateRange(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-    // For time series data - H2 compatible version
+    // For time series data - PostgreSQL compatible version
     @Query(value = "SELECT " +
            "CASE :granularity " +
-           "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
-           "   WHEN 'week' THEN DATEADD('DAY', 1 - MOD(EXTRACT(DAY_OF_WEEK FROM o.order_date) + 5, 7), CAST(o.order_date AS DATE)) " +
-           "   WHEN 'month' THEN DATEADD('DAY', 1 - EXTRACT(DAY FROM o.order_date), CAST(o.order_date AS DATE)) " +
+           "   WHEN 'day' THEN o.order_date::date " +
+           "   WHEN 'week' THEN DATE_TRUNC('week', o.order_date)::date " +
+           "   WHEN 'month' THEN DATE_TRUNC('month', o.order_date)::date " +
            "END as period, " +
            "COUNT(*) as count " +
            "FROM orders o " +
            "WHERE o.order_date BETWEEN :startDate AND :endDate " +
            "GROUP BY " +
            "CASE :granularity " +
-           "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
-           "   WHEN 'week' THEN DATEADD('DAY', 1 - MOD(EXTRACT(DAY_OF_WEEK FROM o.order_date) + 5, 7), CAST(o.order_date AS DATE)) " +
-           "   WHEN 'month' THEN DATEADD('DAY', 1 - EXTRACT(DAY FROM o.order_date), CAST(o.order_date AS DATE)) " +
+           "   WHEN 'day' THEN o.order_date::date " +
+           "   WHEN 'week' THEN DATE_TRUNC('week', o.order_date)::date " +
+           "   WHEN 'month' THEN DATE_TRUNC('month', o.order_date)::date " +
            "END " +
            "ORDER BY period", nativeQuery = true)
     List<Object[]> getOrderCountByTimePeriod(
@@ -103,7 +103,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("carriers") List<String> carriers,
             @Param("regions") List<String> regions);
 
-    @Query("SELECT AVG(DATEDIFF(day, o.orderDate, o.actualDeliveryDate)) " +
+    @Query("SELECT AVG(EXTRACT(DAY FROM (o.actualDeliveryDate - o.orderDate))) " +
            "FROM Order o WHERE o.status = 'delivered' " +
            "AND o.actualDeliveryDate IS NOT NULL " +
            "AND o.orderDate BETWEEN :startDate AND :endDate " +
@@ -115,12 +115,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("carriers") List<String> carriers,
             @Param("regions") List<String> regions);
 
-    // Filtered time series query
+    // Filtered time series query - PostgreSQL compatible
     @Query(value = "SELECT " +
            "CASE :granularity " +
-           "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
-           "   WHEN 'week' THEN DATEADD('DAY', 1 - MOD(EXTRACT(DAY_OF_WEEK FROM o.order_date) + 5, 7), CAST(o.order_date AS DATE)) " +
-           "   WHEN 'month' THEN DATEADD('DAY', 1 - EXTRACT(DAY FROM o.order_date), CAST(o.order_date AS DATE)) " +
+           "   WHEN 'day' THEN o.order_date::date " +
+           "   WHEN 'week' THEN DATE_TRUNC('week', o.order_date)::date " +
+           "   WHEN 'month' THEN DATE_TRUNC('month', o.order_date)::date " +
            "END as period, " +
            "COUNT(*) as count " +
            "FROM orders o " +
@@ -129,9 +129,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
            "AND (:regions IS NULL OR o.destination_region IN (:regions)) " +
            "GROUP BY " +
            "CASE :granularity " +
-           "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
-           "   WHEN 'week' THEN DATEADD('DAY', 1 - MOD(EXTRACT(DAY_OF_WEEK FROM o.order_date) + 5, 7), CAST(o.order_date AS DATE)) " +
-           "   WHEN 'month' THEN DATEADD('DAY', 1 - EXTRACT(DAY FROM o.order_date), CAST(o.order_date AS DATE)) " +
+           "   WHEN 'day' THEN o.order_date::date " +
+           "   WHEN 'week' THEN DATE_TRUNC('week', o.order_date)::date " +
+           "   WHEN 'month' THEN DATE_TRUNC('month', o.order_date)::date " +
            "END " +
            "ORDER BY period", nativeQuery = true)
     List<Object[]> getOrderCountByTimePeriodWithFilters(
@@ -156,12 +156,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("carriers") List<String> carriers,
             @Param("regions") List<String> regions);
 
-    // Delivery performance query (on-time vs delayed by time period)
+    // Delivery performance query (on-time vs delayed by time period) - PostgreSQL compatible
     @Query(value = "SELECT " +
            "CASE :granularity " +
-           "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
-           "   WHEN 'week' THEN DATEADD('DAY', 1 - MOD(EXTRACT(DAY_OF_WEEK FROM o.order_date) + 5, 7), CAST(o.order_date AS DATE)) " +
-           "   WHEN 'month' THEN DATEADD('DAY', 1 - EXTRACT(DAY FROM o.order_date), CAST(o.order_date AS DATE)) " +
+           "   WHEN 'day' THEN o.order_date::date " +
+           "   WHEN 'week' THEN DATE_TRUNC('week', o.order_date)::date " +
+           "   WHEN 'month' THEN DATE_TRUNC('month', o.order_date)::date " +
            "END as period, " +
            "COUNT(CASE WHEN o.status = 'delivered' AND o.actual_delivery_date <= o.promised_delivery_date THEN 1 END) as on_time, " +
            "COUNT(CASE WHEN o.status = 'delivered' AND o.actual_delivery_date > o.promised_delivery_date THEN 1 END) as delayed " +
@@ -171,9 +171,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
            "AND (:regions IS NULL OR o.destination_region IN (:regions)) " +
            "GROUP BY " +
            "CASE :granularity " +
-           "   WHEN 'day' THEN CAST(o.order_date AS DATE) " +
-           "   WHEN 'week' THEN DATEADD('DAY', 1 - MOD(EXTRACT(DAY_OF_WEEK FROM o.order_date) + 5, 7), CAST(o.order_date AS DATE)) " +
-           "   WHEN 'month' THEN DATEADD('DAY', 1 - EXTRACT(DAY FROM o.order_date), CAST(o.order_date AS DATE)) " +
+           "   WHEN 'day' THEN o.order_date::date " +
+           "   WHEN 'week' THEN DATE_TRUNC('week', o.order_date)::date " +
+           "   WHEN 'month' THEN DATE_TRUNC('month', o.order_date)::date " +
            "END " +
            "ORDER BY period", nativeQuery = true)
     List<Object[]> getDeliveryPerformanceByTimePeriod(

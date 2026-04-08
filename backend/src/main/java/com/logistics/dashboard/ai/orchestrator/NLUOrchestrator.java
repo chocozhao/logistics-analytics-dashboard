@@ -166,6 +166,6 @@ public class NLUOrchestrator {
      */
     interface AiAssistant {
 
-        String chat(String systemMessage, @UserMessage String userMessage);
+        String chat(@SystemMessage String systemMessage, @UserMessage String userMessage);
     }
 }
