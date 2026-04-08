@@ -54,21 +54,14 @@ public class DatabaseConfig {
     }
 
     private String getJdbcUrl() {
-        // Approach 1: Use SPRING_DATASOURCE_URL if set (should be full JDBC URL)
-        String springDatasourceUrl = env.getProperty("SPRING_DATASOURCE_URL");
-        if (springDatasourceUrl != null && !springDatasourceUrl.isEmpty()) {
-            System.out.println("Using SPRING_DATASOURCE_URL for JDBC URL");
-            return springDatasourceUrl;
-        }
-
-        // Approach 2: Use DATABASE_URL (Render's connectionString) and convert to JDBC format
+        // Approach 1: Use DATABASE_URL (Render's connectionString) as primary source
         String databaseUrl = env.getProperty("DATABASE_URL");
         if (databaseUrl != null && !databaseUrl.isEmpty()) {
             System.out.println("Using DATABASE_URL for JDBC URL: " + databaseUrl.replaceAll(":([^@]+)@", ":***@")); // Hide password
             return convertToJdbcUrl(databaseUrl);
         }
 
-        // Approach 3: Build from individual components (host, port, database)
+        // Approach 2: Build from individual components (host, port, database)
         String host = env.getProperty("SPRING_DATASOURCE_HOST");
         String port = env.getProperty("SPRING_DATASOURCE_PORT");
         String database = env.getProperty("SPRING_DATASOURCE_DATABASE");
@@ -78,19 +71,13 @@ public class DatabaseConfig {
             return String.format("jdbc:postgresql://%s:%s/%s", host, port, database);
         }
 
-        // Approach 4: Fallback to property from application-prod.properties
+        // Approach 3: Fallback to property from application-prod.properties
         System.out.println("Using fallback JDBC URL from application properties");
         return env.getProperty("spring.datasource.url", "jdbc:postgresql://localhost:5432/logistics");
     }
 
     private String getUsername() {
-        // Try multiple sources for username
-        String username = env.getProperty("SPRING_DATASOURCE_USERNAME");
-        if (username != null && !username.isEmpty()) {
-            return username;
-        }
-
-        // Try to extract from DATABASE_URL
+        // Try to extract from DATABASE_URL first (Render's format)
         String databaseUrl = env.getProperty("DATABASE_URL");
         if (databaseUrl != null && !databaseUrl.isEmpty()) {
             try {
@@ -104,17 +91,17 @@ public class DatabaseConfig {
             }
         }
 
+        // Try SPRING_DATASOURCE_USERNAME as fallback
+        String username = env.getProperty("SPRING_DATASOURCE_USERNAME");
+        if (username != null && !username.isEmpty()) {
+            return username;
+        }
+
         return env.getProperty("spring.datasource.username", "reader");
     }
 
     private String getPassword() {
-        // Try multiple sources for password
-        String password = env.getProperty("SPRING_DATASOURCE_PASSWORD");
-        if (password != null && !password.isEmpty()) {
-            return password;
-        }
-
-        // Try to extract from DATABASE_URL
+        // Try to extract from DATABASE_URL first (Render's format)
         String databaseUrl = env.getProperty("DATABASE_URL");
         if (databaseUrl != null && !databaseUrl.isEmpty()) {
             try {
@@ -128,6 +115,12 @@ public class DatabaseConfig {
             }
         }
 
+        // Try SPRING_DATASOURCE_PASSWORD as fallback
+        String password = env.getProperty("SPRING_DATASOURCE_PASSWORD");
+        if (password != null && !password.isEmpty()) {
+            return password;
+        }
+
         return env.getProperty("spring.datasource.password", "readonly");
     }
 
@@ -137,12 +130,15 @@ public class DatabaseConfig {
         // or: postgresql://username:password@host/database (no port, default 5432)
         // We need: jdbc:postgresql://host:port/database (without username:password in URL)
 
+        System.out.println("Starting URL conversion for: " + databaseUrl.replaceAll(":([^@]+)@", ":***@")); // Hide password
+
         if (databaseUrl == null || databaseUrl.isEmpty()) {
             return databaseUrl;
         }
 
         // If already JDBC format, return as-is
         if (databaseUrl.startsWith("jdbc:")) {
+            System.out.println("URL is already JDBC format, returning as-is");
             return databaseUrl;
         }
 
@@ -150,11 +146,14 @@ public class DatabaseConfig {
             // Parse the PostgreSQL URL
             // Replace postgresql:// with http:// for URI parsing
             String httpUrl = databaseUrl.replace("postgresql://", "http://");
+            System.out.println("Trying URI parsing with httpUrl: " + httpUrl.replaceAll(":([^@]+)@", ":***@"));
             URI uri = new URI(httpUrl);
 
             String host = uri.getHost();
             int port = uri.getPort();
             String path = uri.getPath();
+
+            System.out.println("URI parsing results - host: " + host + ", port: " + port + ", path: " + path);
 
             // Remove leading slash from path if present
             if (path != null && path.startsWith("/")) {
@@ -178,12 +177,15 @@ public class DatabaseConfig {
             if (databaseUrl.startsWith("postgresql://")) {
                 // Remove the postgresql:// prefix
                 String withoutPrefix = databaseUrl.substring("postgresql://".length());
+                System.out.println("Without prefix: " + withoutPrefix.replaceAll(":([^@]+)@", ":***@"));
 
                 // Find @ symbol separating credentials from host
                 int atIndex = withoutPrefix.indexOf('@');
+                System.out.println("@ index: " + atIndex);
                 if (atIndex > 0) {
                     // Extract host/database part after @
                     String hostAndDb = withoutPrefix.substring(atIndex + 1);
+                    System.out.println("Host and DB part: " + hostAndDb);
 
                     // Check if hostAndDb contains port
                     if (hostAndDb.contains(":")) {
@@ -195,6 +197,7 @@ public class DatabaseConfig {
                         // Add default port
                         // Find / separating host from database
                         int slashIndex = hostAndDb.indexOf('/');
+                        System.out.println("/ index: " + slashIndex);
                         if (slashIndex > 0) {
                             String host = hostAndDb.substring(0, slashIndex);
                             String db = hostAndDb.substring(slashIndex + 1);
@@ -209,12 +212,18 @@ public class DatabaseConfig {
                     }
                 } else {
                     // No @ found, assume it's already host/database format
-                    return "jdbc:postgresql://" + withoutPrefix;
+                    System.out.println("No @ found, assuming host/database format");
+                    String result = "jdbc:postgresql://" + withoutPrefix;
+                    System.out.println("Converted URL via string manipulation (no @): " + result);
+                    return result;
                 }
             }
 
             // Default fallback
-            return "jdbc:postgresql://" + databaseUrl;
+            System.out.println("Using default fallback conversion");
+            String result = "jdbc:postgresql://" + databaseUrl;
+            System.out.println("Converted URL via default fallback: " + result);
+            return result;
         }
     }
 }
