@@ -3,6 +3,7 @@ package com.logistics.dashboard.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 import com.zaxxer.hikari.HikariDataSource;
 
@@ -20,6 +21,7 @@ public class DatabaseConfig {
     }
 
     @Bean
+    @Primary
     @ConfigurationProperties(prefix = "spring.datasource.hikari")
     public DataSource dataSource() {
         HikariDataSource dataSource = new HikariDataSource();
