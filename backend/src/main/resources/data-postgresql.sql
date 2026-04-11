@@ -1,11 +1,12 @@
 -- Sample data generation for Logistics Analytics Dashboard
--- Generates 10,000+ realistic order records for development and testing
--- Date range: 2024-01-01 to 2025-03-31 (15 months)
+-- Generates 30,000+ realistic order records for development and testing
+-- Date range: 2024-01-01 to 2026-04-05 (825 days)
+-- Ensures continuous coverage for forecasting (especially Oct 2024 - Mar 2025)
 
--- Clear existing data (optional)
+-- Clear existing data (optional - uncomment for fresh database)
 -- TRUNCATE TABLE orders RESTART IDENTITY;
 
--- Insert sample data
+-- Insert sample data with improved date consistency
 INSERT INTO orders (
     order_date,
     promised_delivery_date,
@@ -21,24 +22,14 @@ INSERT INTO orders (
 )
 WITH base_data AS (
     SELECT
-        -- Order date: random date between 2024-01-01 and 2025-03-31
-        '2024-01-01'::date + (random() * 455)::integer AS order_date,
+        -- Order date: random date between 2024-01-01 and 2026-04-05 (825 days)
+        -- Evenly distributed to ensure continuous time series
+        '2024-01-01'::date + (random() * 825)::integer AS order_date,
 
-        -- Promised delivery: 2-7 days after order date
-        ('2024-01-01'::date + (random() * 455)::integer) + (2 + random() * 5)::integer AS promised_delivery_date,
+        -- Promised delivery: 2-7 days after order date (consistent relationship)
+        '2024-01-01'::date + (random() * 825)::integer + (2 + random() * 5)::integer AS promised_delivery_date,
 
-        -- Actual delivery:
-        CASE
-            -- 85% delivered, 10% in transit, 5% pending/cancelled
-            WHEN random() < 0.85 THEN
-                -- Delivered: sometimes on time, sometimes delayed
-                ('2024-01-01'::date + (random() * 455)::integer) +
-                (2 + random() * 5)::integer +
-                CASE WHEN random() < 0.2 THEN (1 + random() * 3)::integer ELSE 0 END
-            ELSE NULL
-        END AS actual_delivery_date,
-
-        -- Status
+        -- Status distribution: 85% delivered, 10% in transit, 5% pending/cancelled
         CASE
             WHEN random() < 0.85 THEN 'delivered'
             WHEN random() < 0.95 THEN 'in_transit'
@@ -46,7 +37,7 @@ WITH base_data AS (
             ELSE 'cancelled'
         END AS status,
 
-        -- Carrier: weighted distribution
+        -- Carrier: weighted distribution (same as original)
         CASE
             WHEN random() < 0.35 THEN 'UPS'
             WHEN random() < 0.60 THEN 'FedEx'
@@ -56,7 +47,7 @@ WITH base_data AS (
             ELSE 'Regional Carrier'
         END AS carrier,
 
-        -- Destination city
+        -- Destination city from predefined list
         (ARRAY['New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix', 'Philadelphia',
                'San Antonio', 'San Diego', 'Dallas', 'San Jose', 'Austin', 'Jacksonville',
                'Fort Worth', 'Columbus', 'Charlotte', 'San Francisco', 'Indianapolis',
@@ -70,13 +61,20 @@ WITH base_data AS (
 
         -- Quantity: 1-50 items
         (1 + random() * 49)::integer AS quantity
-    FROM generate_series(1, 10000)
+    FROM generate_series(1, 30000)
 ),
-state_data AS (
+processed_data AS (
     SELECT
         order_date,
         promised_delivery_date,
-        actual_delivery_date,
+        -- Actual delivery date: only for delivered orders
+        CASE
+            WHEN status = 'delivered' THEN
+                -- Sometimes on time, sometimes delayed (20% chance of delay)
+                promised_delivery_date +
+                CASE WHEN random() < 0.2 THEN (1 + random() * 3)::integer ELSE 0 END
+            ELSE NULL
+        END AS actual_delivery_date,
         status,
         carrier,
         destination_city,
@@ -121,20 +119,27 @@ SELECT
     order_value,
     sku,
     quantity
-FROM state_data;
+FROM processed_data;
 
--- Verify data insertion
+-- Data quality verification (commented out for production)
+/*
 SELECT COUNT(*) AS total_orders FROM orders;
+SELECT
+    MIN(order_date) AS earliest_order,
+    MAX(order_date) AS latest_order,
+    COUNT(*) AS orders_in_forecast_range
+FROM orders
+WHERE order_date BETWEEN '2024-10-01' AND '2025-03-31';
 SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY COUNT(*) DESC;
 SELECT carrier, COUNT(*) FROM orders GROUP BY carrier ORDER BY COUNT(*) DESC;
 SELECT destination_region, COUNT(*) FROM orders GROUP BY destination_region ORDER BY COUNT(*) DESC;
 
--- Calculate some sample KPIs
+-- Sample time series check for forecasting
 SELECT
-    COUNT(*) AS total_orders,
-    COUNT(CASE WHEN status = 'delivered' THEN 1 END) AS delivered_orders,
-    COUNT(CASE WHEN status = 'delivered' AND actual_delivery_date > promised_delivery_date THEN 1 END) AS delayed_orders,
-    ROUND(COUNT(CASE WHEN status = 'delivered' THEN 1 END) * 100.0 / COUNT(*), 2) AS on_time_rate,
-    ROUND(AVG(EXTRACT(DAY FROM (actual_delivery_date - order_date)))::numeric, 2) AS avg_delivery_days
+    DATE_TRUNC('week', order_date) AS week,
+    COUNT(*) AS order_count
 FROM orders
-WHERE actual_delivery_date IS NOT NULL;
+WHERE order_date BETWEEN '2024-10-01' AND '2025-03-31'
+GROUP BY DATE_TRUNC('week', order_date)
+ORDER BY week;
+*/

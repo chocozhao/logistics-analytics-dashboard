@@ -2,6 +2,7 @@ package com.logistics.dashboard.config;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
@@ -20,36 +21,15 @@ public class DatabaseConfig {
         this.env = env;
     }
 
-    @Bean
-    @ConditionalOnMissingBean(DataSource.class)
-    @ConfigurationProperties(prefix = "spring.datasource.hikari")
-    public DataSource dataSource() {
-        HikariDataSource dataSource = new HikariDataSource();
-
-        // Log the configuration (using System.out since logging might not be initialized yet)
-        System.out.println("=== DatabaseConfig - Creating DataSource ===");
-
-        // Let Spring Boot auto-configure the basic properties
-        // We just need to set Hikari-specific properties
-        dataSource.setDriverClassName("org.postgresql.Driver");
-
-        // Set connection pool properties (can also be set in application-prod.properties)
-        dataSource.setMaximumPoolSize(10);
-        dataSource.setMinimumIdle(5);
-        dataSource.setConnectionTimeout(30000);
-        dataSource.setIdleTimeout(600000);
-        dataSource.setMaxLifetime(1800000);
-
-        // Log final configuration
-        System.out.println("DataSource configured with:");
-        System.out.println("Driver: " + dataSource.getDriverClassName());
-        System.out.println("Max Pool Size: " + dataSource.getMaximumPoolSize());
-        System.out.println("Min Idle: " + dataSource.getMinimumIdle());
-        System.out.println("Connection Timeout: " + dataSource.getConnectionTimeout());
-        System.out.println("======================");
-
-        return dataSource;
-    }
+    // DataSource bean is now auto-configured by Spring Boot
+    // The DatabaseEnvironmentPostProcessor ensures URLs are in correct JDBC format
+    // Connection pool properties are set via spring.datasource.hikari.* properties
+    // @Bean
+    // @ConditionalOnMissingBean(DataSource.class)
+    // @ConfigurationProperties(prefix = "spring.datasource")
+    // public DataSource dataSource() {
+    //     return DataSourceBuilder.create().build();
+    // }
 
     private String getJdbcUrl() {
         // Debug: print all relevant environment variables

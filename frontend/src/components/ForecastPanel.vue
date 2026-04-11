@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, onUnmounted } from 'vue'
+import { ref, onMounted, watch, onUnmounted, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { useDashboardStore } from '../stores/dashboard'
 
@@ -11,8 +11,10 @@ const granularity = ref('week')
 const periods = ref(4)
 const loadingForecast = ref(false)
 const forecastError = ref(null)
+const hasTriedInitialLoad = ref(false)
 
 const generateForecast = async () => {
+  console.log('generateForecast called with granularity:', granularity.value, 'periods:', periods.value)
   loadingForecast.value = true
   forecastError.value = null
 
@@ -22,35 +24,150 @@ const generateForecast = async () => {
   }
 
   try {
+    console.log('Calling fetchForecast...')
     await dashboardStore.fetchForecast(granularity.value, periods.value)
+    console.log('fetchForecast completed, forecastData:', dashboardStore.forecastData)
+    // Mark that we've attempted initial load
+    hasTriedInitialLoad.value = true
+    // Render chart after a short delay to ensure DOM is ready
     setTimeout(() => {
       renderForecastChart()
-    }, 100)
+    }, 300)
   } catch (err) {
-    forecastError.value = err.message || 'Failed to generate forecast'
+    console.error('Error in generateForecast:', err)
+    forecastError.value = err.message || '生成预测失败'
+    hasTriedInitialLoad.value = true
   } finally {
     loadingForecast.value = false
   }
 }
 
-const renderForecastChart = () => {
-  if (!chartRef.value || !dashboardStore.forecastData) return
+const initForecastChart = (maxRetries = 10, retryCount = 0) => {
+  console.log('initForecastChart called', retryCount)
+  if (!chartRef.value) {
+    console.log('Missing chartRef')
+    if (retryCount < maxRetries) {
+      setTimeout(() => {
+        initForecastChart(maxRetries, retryCount + 1)
+      }, 100)
+    }
+    return false
+  }
 
+  // Check if chart container has dimensions
+  if (chartRef.value.clientWidth === 0 || chartRef.value.clientHeight === 0) {
+    if (retryCount === 0) {
+      console.warn('Forecast chart container has no dimensions, retrying...')
+    }
+    if (retryCount < maxRetries) {
+      setTimeout(() => {
+        initForecastChart(maxRetries, retryCount + 1)
+      }, 100)
+    }
+    return false
+  }
+
+  if (chartInstance) {
+    chartInstance.dispose()
+  }
   chartInstance = echarts.init(chartRef.value)
+  return true
+}
 
-  const forecastData = dashboardStore.forecastData
-  const historicalData = forecastData.historical || []
-  const forecastSeries = forecastData.forecast || []
+const renderForecastChart = (retryCount = 0) => {
+  console.log('renderForecastChart called, forecastData:', dashboardStore.forecastData, 'retryCount:', retryCount)
+  if (!chartRef.value || !dashboardStore.forecastData) {
+    console.log('Missing chartRef or forecastData:', { chartRef: chartRef.value, forecastData: dashboardStore.forecastData })
+    // If we have forecast data but no chart ref, retry a few times
+    if (dashboardStore.forecastData && !chartRef.value && retryCount < 10) {
+      console.log('Chart ref not available, retrying...', retryCount)
+      setTimeout(() => {
+        renderForecastChart(retryCount + 1)
+      }, 200)
+    }
+    return
+  }
 
-  const allData = [...historicalData, ...forecastSeries]
+  // Initialize chart if needed
+  if (!chartInstance && !initForecastChart()) {
+    // Chart initialization failed, retry if we haven't exceeded max retries
+    if (retryCount < 10) {
+      console.log('Chart initialization failed, retrying...', retryCount)
+      setTimeout(() => {
+        renderForecastChart(retryCount + 1)
+      }, 300)
+    } else {
+      console.error('Failed to initialize chart after', retryCount, 'retries')
+      forecastError.value = '图表初始化失败，请重试'
+    }
+    return
+  }
+  if (!chartInstance) return
+
+  const forecastResponse = dashboardStore.forecastData
+  console.log('forecastResponse structure:', forecastResponse)
+  console.log('forecastResponse keys:', Object.keys(forecastResponse || {}))
+
+  if (!forecastResponse || !forecastResponse.data) {
+    console.error('No forecast data available')
+    chartInstance.clear()
+    chartInstance.setOption({
+      title: {
+        text: '无预测数据',
+        left: 'center',
+        top: 'center',
+        textStyle: {
+          color: '#909399',
+          fontSize: 14,
+          fontWeight: 'normal'
+        }
+      }
+    })
+    return
+  }
+
+  const allData = forecastResponse.data || []
+  console.log('allData length:', allData.length, 'allData:', allData)
+
+  if (allData.length === 0) {
+    console.error('Empty forecast data array')
+    chartInstance.clear()
+    chartInstance.setOption({
+      title: {
+        text: '预测数据为空',
+        left: 'center',
+        top: 'center',
+        textStyle: {
+          color: '#909399',
+          fontSize: 14,
+          fontWeight: 'normal'
+        }
+      }
+    })
+    return
+  }
+
+  // 分离历史数据和预测数据
+  const historicalData = allData.filter(item => !item.isForecast)
+  const forecastSeries = allData.filter(item => item.isForecast)
+  console.log('historicalData length:', historicalData.length, 'forecastSeries length:', forecastSeries.length)
 
   const xAxisData = allData.map(item => {
-    const date = new Date(item.date)
-    return `${date.getMonth() + 1}/${date.getDate()}`
+    try {
+      const date = new Date(item.date)
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date:', item.date)
+        return '无效日期'
+      }
+      return `${date.getMonth() + 1}月${date.getDate()}日`
+    } catch (e) {
+      console.error('Error parsing date:', e, 'item:', item)
+      return '日期错误'
+    }
   })
 
-  const historicalValues = historicalData.map(item => item.count)
-  const forecastValues = forecastSeries.map(item => item.count)
+  const historicalValues = historicalData.map(item => item.value || 0)
+  const forecastValues = forecastSeries.map(item => item.value || 0)
 
   // Pad historical values with null for forecast positions
   const paddedHistorical = [...historicalValues]
@@ -67,28 +184,39 @@ const renderForecastChart = () => {
 
   const option = {
     title: {
-      text: 'Order Volume Forecast',
+      text: '订单量预测',
       left: 'center',
       top: 10
     },
     tooltip: {
       trigger: 'axis',
       formatter: (params) => {
-        const param = params[0]
-        const dataIndex = param.dataIndex
-        const item = allData[dataIndex]
-        const date = new Date(item.date)
-        const formattedDate = date.toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric'
-        })
-        const type = item.isForecast ? 'Forecast' : 'Historical'
-        return `${formattedDate} (${type})<br/>Orders: ${item.count}`
+        try {
+          const param = params[0]
+          const dataIndex = param.dataIndex
+          const item = allData[dataIndex]
+          if (!item) {
+            return `数据点 ${dataIndex}<br/>订单数: 0`
+          }
+          const date = new Date(item.date)
+          let formattedDate = '无效日期'
+          if (!isNaN(date.getTime())) {
+            formattedDate = date.toLocaleDateString('zh-CN', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric'
+            })
+          }
+          const type = item.isForecast ? '预测' : '历史'
+          return `${formattedDate} (${type})<br/>订单数: ${item.value || 0}`
+        } catch (e) {
+          console.error('Error in tooltip formatter:', e)
+          return '工具提示错误'
+        }
       }
     },
     legend: {
-      data: ['Historical', 'Forecast'],
+      data: ['历史数据', '预测数据'],
       top: 40
     },
     grid: {
@@ -112,11 +240,11 @@ const renderForecastChart = () => {
     },
     yAxis: {
       type: 'value',
-      name: 'Orders'
+      name: '订单数'
     },
     series: [
       {
-        name: 'Historical',
+        name: '历史数据',
         type: 'line',
         data: paddedHistorical,
         itemStyle: {
@@ -142,7 +270,7 @@ const renderForecastChart = () => {
         }
       },
       {
-        name: 'Forecast',
+        name: '预测数据',
         type: 'line',
         data: paddedForecast,
         itemStyle: {
@@ -158,7 +286,16 @@ const renderForecastChart = () => {
     ]
   }
 
+  chartInstance.clear()
   chartInstance.setOption(option)
+  // Ensure chart resizes after render
+  chartInstance.resize()
+  // Additional resize after a short delay to handle container sizing
+  setTimeout(() => {
+    if (chartInstance) {
+      chartInstance.resize()
+    }
+  }, 50)
 }
 
 const resizeChart = () => {
@@ -168,9 +305,20 @@ const resizeChart = () => {
 }
 
 onMounted(() => {
+  console.log('ForecastPanel mounted, setting up...')
+  console.log('Current dashboardStore.dateRange:', dashboardStore.dateRange.value)
+  console.log('Current dashboardStore.startDate:', dashboardStore.startDate)
+  console.log('Current dashboardStore.endDate:', dashboardStore.endDate)
+  console.log('Current dashboardStore.filters:', dashboardStore.filters.value)
+
   window.addEventListener('resize', resizeChart)
-  // Generate initial forecast
-  generateForecast()
+  // Generate initial forecast after a delay to ensure tab is fully rendered
+  setTimeout(() => {
+    console.log('Calling generateForecast from onMounted...')
+    if (!hasTriedInitialLoad.value) {
+      generateForecast()
+    }
+  }, 500)
 })
 
 onUnmounted(() => {
@@ -185,29 +333,41 @@ watch(() => dashboardStore.filters, () => {
   // Regenerate forecast when filters change
   generateForecast()
 }, { deep: true })
+
+watch(() => dashboardStore.forecastData, () => {
+  // Render chart when forecast data changes
+  if (dashboardStore.forecastData) {
+    // Wait for next tick to ensure DOM is updated
+    nextTick(() => {
+      setTimeout(() => {
+        renderForecastChart()
+      }, 100)
+    })
+  }
+}, { deep: true })
 </script>
 
 <template>
   <div class="forecast-panel">
     <el-card class="forecast-card">
       <template #header>
-        <h3>Demand Forecasting</h3>
-        <p class="subtitle">Generate predictive insights for future order volumes.</p>
+        <h3>需求预测</h3>
+        <p class="subtitle">生成未来订单量的预测洞察。</p>
       </template>
 
       <div class="forecast-controls">
         <div class="control-group">
           <div class="control-item">
-            <label>Granularity</label>
+            <label>粒度</label>
             <el-select v-model="granularity" :disabled="loadingForecast" size="small">
-              <el-option label="Day" value="day" />
-              <el-option label="Week" value="week" />
-              <el-option label="Month" value="month" />
+              <el-option label="日" value="day" />
+              <el-option label="周" value="week" />
+              <el-option label="月" value="month" />
             </el-select>
           </div>
 
           <div class="control-item">
-            <label>Forecast Periods</label>
+            <label>预测周期数</label>
             <el-input-number
               v-model="periods"
               :min="1"
@@ -224,7 +384,7 @@ watch(() => dashboardStore.filters, () => {
               :loading="loadingForecast"
               @click="generateForecast"
             >
-              Generate Forecast
+              生成预测
             </el-button>
           </div>
         </div>
@@ -240,63 +400,48 @@ watch(() => dashboardStore.filters, () => {
       </div>
 
       <div class="forecast-results">
-        <el-divider content-position="left">Forecast Visualization</el-divider>
+        <el-divider content-position="left">预测可视化</el-divider>
         <div class="chart-container">
           <div v-if="loadingForecast" class="chart-loading">
             <el-icon class="loading-icon"><Loading /></el-icon>
-            <span>Generating forecast...</span>
+            <span>正在生成预测...</span>
           </div>
           <div v-else-if="forecastError" class="chart-error">
             <el-icon class="error-icon"><Warning /></el-icon>
-            <span>Error generating forecast</span>
+            <span>生成预测出错</span>
           </div>
           <div v-else class="chart-wrapper">
             <div ref="chartRef" class="chart"></div>
-            <div v-if="!dashboardStore.forecastData" class="no-data">
-              No forecast data available. Click "Generate Forecast" to create one.
+            <div v-if="!dashboardStore.forecastData && hasTriedInitialLoad" class="no-data">
+              预测加载失败或无数据。点击"生成预测"重试。
+            </div>
+            <div v-else-if="!dashboardStore.forecastData" class="no-data">
+              正在加载预测数据...
             </div>
           </div>
         </div>
 
         <div v-if="dashboardStore.forecastData?.recommendations" class="recommendations">
-          <el-divider content-position="left">Recommendations</el-divider>
-          <div class="recommendation-list">
-            <div
-              v-for="(rec, index) in dashboardStore.forecastData.recommendations"
-              :key="index"
-              class="recommendation-item"
-            >
-              <el-icon class="recommendation-icon">
-                <component :is="rec.type === 'inventory' ? 'Box' : 'Truck'" />
-              </el-icon>
-              <div class="recommendation-content">
-                <div class="recommendation-title">{{ rec.title }}</div>
-                <div class="recommendation-description">{{ rec.description }}</div>
-                <div class="recommendation-details">
-                  <span class="detail-label">Impact:</span>
-                  <el-tag :type="rec.impact === 'high' ? 'danger' : rec.impact === 'medium' ? 'warning' : 'success'" size="small">
-                    {{ rec.impact }}
-                  </el-tag>
-                </div>
-              </div>
-            </div>
+          <el-divider content-position="left">建议</el-divider>
+          <div class="recommendation-text">
+            {{ dashboardStore.forecastData.recommendations }}
           </div>
         </div>
 
-        <div v-if="dashboardStore.forecastData?.metrics" class="forecast-metrics">
-          <el-divider content-position="left">Forecast Accuracy Metrics</el-divider>
+        <div v-if="dashboardStore.forecastData" class="forecast-metrics">
+          <el-divider content-position="left">预测指标</el-divider>
           <div class="metrics-grid">
             <div class="metric-item">
-              <div class="metric-label">Mean Absolute Error (MAE)</div>
-              <div class="metric-value">{{ dashboardStore.forecastData.metrics.mae?.toFixed(2) || 'N/A' }}</div>
+              <div class="metric-label">预测算法</div>
+              <div class="metric-value">{{ dashboardStore.forecastData.algorithm || 'N/A' }}</div>
             </div>
             <div class="metric-item">
-              <div class="metric-label">Forecast Method</div>
-              <div class="metric-value">{{ dashboardStore.forecastData.metrics.method || 'N/A' }}</div>
+              <div class="metric-label">预测周期数</div>
+              <div class="metric-value">{{ dashboardStore.forecastData.forecastPeriods || 'N/A' }}</div>
             </div>
             <div class="metric-item">
-              <div class="metric-label">Confidence Level</div>
-              <div class="metric-value">{{ dashboardStore.forecastData.metrics.confidence || 'N/A' }}</div>
+              <div class="metric-label">安全库存乘数</div>
+              <div class="metric-value">{{ dashboardStore.forecastData.safetyStockMultiplier || 'N/A' }}</div>
             </div>
           </div>
         </div>
@@ -492,4 +637,13 @@ watch(() => dashboardStore.filters, () => {
     grid-template-columns: 1fr;
   }
 }
+  .recommendation-text {
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #67c23a;
+    line-height: 1.6;
+    white-space: pre-line;
+  }
+
 </style>

@@ -3,7 +3,15 @@ import { ref } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
 
 const dashboardStore = useDashboardStore()
-const title = 'Logistics Analytics Dashboard'
+const title = '物流分析仪表板'
+
+// Database data range: 2024-01-01 to 2025-03-31
+const minDate = new Date('2024-01-01')
+const maxDate = new Date('2025-03-31')
+
+const disabledDate = (time) => {
+  return time.getTime() < minDate.getTime() || time.getTime() > maxDate.getTime()
+}
 </script>
 
 <template>
@@ -11,30 +19,35 @@ const title = 'Logistics Analytics Dashboard'
     <div class="header-content">
       <div class="header-left">
         <h1>{{ title }}</h1>
-        <p class="subtitle">AI-powered insights for freight operations</p>
+        <p class="subtitle">AI驱动的货运运营洞察</p>
       </div>
       <div class="header-right">
         <div class="filter-section">
           <el-date-picker
             v-model="dashboardStore.dateRange"
             type="daterange"
-            range-separator="to"
-            start-placeholder="Start date"
-            end-placeholder="End date"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
             size="small"
             style="margin-right: 10px;"
+            :disabled-date="disabledDate"
+            :default-value="[minDate, new Date('2024-01-31')]"
           />
+          <el-button @click="dashboardStore.refreshDashboardData" size="small" type="primary" style="margin-right: 10px;">
+            应用筛选
+          </el-button>
           <el-button @click="dashboardStore.resetFilters" size="small">
-            Reset Filters
+            重置过滤器
           </el-button>
         </div>
         <div class="status-indicator" v-if="dashboardStore.loading">
           <el-icon class="loading-icon"><Loading /></el-icon>
-          <span>Loading data...</span>
+          <span>正在加载数据...</span>
         </div>
         <div class="error-indicator" v-if="dashboardStore.error">
           <el-icon class="error-icon"><Warning /></el-icon>
-          <span>Error: {{ dashboardStore.error }}</span>
+          <span>错误: {{ dashboardStore.error }}</span>
         </div>
       </div>
     </div>

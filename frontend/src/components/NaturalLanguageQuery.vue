@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import * as echarts from 'echarts'
 import { useDashboardStore } from '../stores/dashboard'
+import { Refresh, Delete } from '@element-plus/icons-vue'
 
 const dashboardStore = useDashboardStore()
 const question = ref('')
@@ -33,9 +34,44 @@ const submitQuery = async () => {
       }, 100)
     }
   } catch (err) {
-    queryError.value = err.message || 'Failed to process query'
+    queryError.value = err.message || '处理查询失败'
   } finally {
     loadingQuery.value = false
+  }
+}
+
+const startNewQuery = () => {
+  question.value = ''
+  queryResult.value = null
+  queryError.value = null
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
+}
+
+const clearQuery = () => {
+  question.value = ''
+  queryResult.value = null
+  queryError.value = null
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
+}
+
+const formatFilters = (filters) => {
+  if (!filters) return null
+  if (typeof filters === 'string') return filters
+  try {
+    const entries = Object.entries(filters)
+    if (entries.length === 0) return null
+    return entries
+      .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+      .join('; ')
+  } catch (e) {
+    console.warn('格式化筛选条件失败:', e)
+    return JSON.stringify(filters)
   }
 }
 
@@ -49,7 +85,7 @@ const renderChart = (chartData) => {
   // and create appropriate chart based on the data structure
   const option = {
     title: {
-      text: 'Query Results Visualization',
+      text: '查询结果可视化',
       left: 'center',
       top: 10
     },
@@ -72,7 +108,7 @@ const renderChart = (chartData) => {
     },
     series: [
       {
-        name: 'Result',
+        name: '结果',
         type: chartData.chartType === 'bar' ? 'bar' : 'line',
         data: chartData.values || [],
         itemStyle: {
@@ -111,8 +147,8 @@ watch(() => dashboardStore.filters, () => {
   <div class="natural-language-query">
     <el-card class="query-card">
       <template #header>
-        <h3>Ask a Question About Your Data</h3>
-        <p class="subtitle">Ask natural language questions about orders, delivery performance, carriers, and more.</p>
+        <h3>数据自然语言查询</h3>
+        <p class="subtitle">使用自然语言提问关于订单、交货性能、承运商等问题。</p>
       </template>
 
       <div class="query-input-section">
@@ -120,7 +156,7 @@ watch(() => dashboardStore.filters, () => {
           v-model="question"
           type="textarea"
           :rows="3"
-          placeholder="Example: Show me total orders by carrier for the last 30 days"
+          placeholder="例如：显示过去30天各承运商的总订单数"
           :disabled="loadingQuery"
         />
         <div class="query-actions">
@@ -130,11 +166,31 @@ watch(() => dashboardStore.filters, () => {
             :disabled="!question.trim()"
             @click="submitQuery"
           >
-            Ask Question
+            提问
           </el-button>
           <el-button @click="question = ''" :disabled="loadingQuery">
-            Clear
+            清除
           </el-button>
+        </div>
+
+        <div v-if="!loadingQuery" class="example-queries">
+          <el-divider content-position="left">示例问题</el-divider>
+          <div class="examples">
+            <el-tag
+              v-for="(example, index) in [
+                '显示过去30天各承运商的总订单数',
+                'UPS和FedEx的准时交货率是多少？',
+                '一月份有多少订单延迟？',
+                '按周显示订单量趋势',
+                '哪个区域的交货性能最好？'
+              ]"
+              :key="index"
+              class="example-tag"
+              @click="question = example"
+            >
+              {{ example }}
+            </el-tag>
+          </div>
         </div>
       </div>
 
@@ -148,27 +204,74 @@ watch(() => dashboardStore.filters, () => {
       </div>
 
       <div v-if="queryResult" class="result-section">
-        <el-divider content-position="left">Answer</el-divider>
+        <div class="result-actions">
+          <el-button type="primary" plain @click="startNewQuery">
+            <el-icon><Refresh /></el-icon>
+            新查询
+          </el-button>
+          <el-button @click="clearQuery">
+            <el-icon><Delete /></el-icon>
+            清除结果
+          </el-button>
+        </div>
+        <el-divider content-position="left">答案</el-divider>
         <div class="answer">
-          {{ queryResult.answer }}
+          <div v-if="typeof queryResult.answer === 'string' && queryResult.answer.includes('\\n')" class="formatted-answer">
+            <template v-for="(line, index) in queryResult.answer.split('\\n')" :key="index">
+              <p v-if="line.trim()" class="answer-line">{{ line.trim() }}</p>
+              <br v-else />
+            </template>
+          </div>
+          <div v-else class="simple-answer">
+            {{ queryResult.answer }}
+          </div>
+          <div v-if="queryResult.summary" class="answer-summary">
+            <el-divider content-position="left">摘要</el-divider>
+            <div class="summary-content">{{ queryResult.summary }}</div>
+          </div>
         </div>
 
-        <el-divider content-position="left">Visualization</el-divider>
+        <el-divider content-position="left">可视化</el-divider>
         <div v-if="queryResult.chartData" class="chart-container">
-          <div ref="chartRef" class="chart"></div>
+          <div v-if="queryResult.chartType === 'none' || queryResult.chartData.chartType === 'none'" class="no-chart-message">
+            <el-alert
+              :title="queryResult.chartData.message || '此问题无可视化数据'"
+              type="info"
+              show-icon
+              :closable="false"
+            />
+          </div>
+          <div v-else>
+            <div ref="chartRef" class="chart"></div>
+            <!-- Display KPI summary if available -->
+            <div v-if="queryResult.chartData && queryResult.chartData.kpiSummary" class="kpi-summary">
+              <el-divider content-position="left">关键指标摘要</el-divider>
+              <div class="kpi-metrics">
+                <div v-for="(value, key) in queryResult.chartData.kpiSummary" :key="key" class="kpi-metric">
+                  <span class="kpi-label">{{ key === 'onTimeRate' ? '准时交付率' : key === 'avgDeliveryDays' ? '平均交付天数' : key }}:</span>
+                  <span class="kpi-value">{{ value }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div v-else class="no-chart">
-          No visualization available for this query
+          此查询无可视化数据
         </div>
 
-        <el-divider content-position="left">Explanation</el-divider>
+        <el-divider content-position="left">查询详情</el-divider>
         <div class="explanation">
-          <p><strong>Filters Applied:</strong> {{ queryResult.explanation?.filters || 'None' }}</p>
-          <p><strong>Metrics Used:</strong> {{ queryResult.explanation?.metrics || 'N/A' }}</p>
-          <p><strong>Query Plan:</strong> {{ queryResult.explanation?.queryPlan || 'N/A' }}</p>
+          <p><strong>AI解释:</strong> {{ queryResult.explanation || '系统正在分析您的问题...' }}</p>
+          <p><strong>应用筛选条件:</strong> {{ formatFilters(queryResult.filters) || '无筛选条件' }}</p>
+          <p><strong>使用指标:</strong> {{
+            Array.isArray(queryResult.metrics) ?
+            queryResult.metrics.join(', ') :
+            queryResult.metrics || '通用指标'
+          }}</p>
+          <p><strong>查询计划:</strong> {{ queryResult.queryPlan || '标准查询处理流程' }}</p>
         </div>
 
-        <el-divider content-position="left">Raw Data</el-divider>
+        <el-divider content-position="left">原始数据</el-divider>
         <div class="raw-data">
           <el-table
             :data="queryResult.rawData"
@@ -186,30 +289,11 @@ watch(() => dashboardStore.filters, () => {
             />
           </el-table>
           <div v-else class="no-raw-data">
-            No raw data available
+            无原始数据
           </div>
         </div>
       </div>
 
-      <div v-else-if="!loadingQuery" class="example-queries">
-        <el-divider content-position="left">Example Questions</el-divider>
-        <div class="examples">
-          <el-tag
-            v-for="(example, index) in [
-              'Show me total orders by carrier for the last 30 days',
-              'What is the on-time delivery rate for UPS vs FedEx?',
-              'How many orders were delayed in January?',
-              'Display order volume trend by week',
-              'Which region has the highest delivery performance?'
-            ]"
-            :key="index"
-            class="example-tag"
-            @click="question = example"
-          >
-            {{ example }}
-          </el-tag>
-        </div>
-      </div>
     </el-card>
   </div>
 </template>
@@ -251,10 +335,43 @@ watch(() => dashboardStore.filters, () => {
 .answer {
   font-size: 16px;
   line-height: 1.6;
-  padding: 15px;
+  padding: 20px;
   background-color: #f8f9fa;
-  border-radius: 4px;
+  border-radius: 8px;
   border-left: 4px solid #409eff;
+}
+
+.formatted-answer {
+  line-height: 1.8;
+}
+
+.answer-line {
+  margin: 8px 0;
+  position: relative;
+  padding-left: 20px;
+}
+
+.answer-line:before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: #409eff;
+  font-weight: bold;
+}
+
+.answer-summary {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.summary-content {
+  font-size: 15px;
+  color: #333;
+  background-color: #fff;
+  padding: 15px;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
 }
 
 .chart-container {
@@ -265,6 +382,14 @@ watch(() => dashboardStore.filters, () => {
   width: 100%;
   height: 400px;
   min-height: 300px;
+}
+
+.no-chart-message {
+  text-align: center;
+  padding: 40px;
+  background-color: #f0f9ff;
+  border-radius: 8px;
+  border: 1px dashed #b3d8ff;
 }
 
 .no-chart {
@@ -317,5 +442,41 @@ watch(() => dashboardStore.filters, () => {
 
 .example-tag:hover {
   background-color: #ecf5ff;
+}
+
+.kpi-summary {
+  margin-top: 30px;
+  padding: 20px;
+  background-color: #f0f9ff;
+  border-radius: 8px;
+  border: 1px solid #b3d8ff;
+}
+
+.kpi-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 15px;
+  margin-top: 15px;
+}
+
+.kpi-metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background-color: white;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.kpi-label {
+  font-weight: 600;
+  color: #333;
+}
+
+.kpi-value {
+  font-weight: 700;
+  font-size: 16px;
+  color: #409eff;
 }
 </style>

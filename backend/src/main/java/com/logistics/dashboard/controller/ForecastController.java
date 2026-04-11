@@ -30,7 +30,8 @@ public class ForecastController {
         }
 
         // Use default date range if not provided
-        LocalDate endDate = request.getEndDate() != null ? request.getEndDate() : LocalDate.now();
+        // Database has data from 2024-01-01 to 2025-03-31
+        LocalDate endDate = request.getEndDate() != null ? request.getEndDate() : LocalDate.of(2025, 3, 31);
         LocalDate startDate = request.getStartDate() != null ? request.getStartDate() : endDate.minusMonths(6);
 
         ForecastResponse response = forecastingService.forecastDemand(
@@ -54,7 +55,7 @@ public class ForecastController {
             @RequestParam(required = false) List<String> carriers,
             @RequestParam(required = false) List<String> regions) {
 
-        LocalDate finalEndDate = endDate != null ? endDate : LocalDate.now();
+        LocalDate finalEndDate = endDate != null ? endDate : LocalDate.of(2025, 3, 31);
         LocalDate finalStartDate = startDate != null ? startDate : finalEndDate.minusMonths(3);
 
         ForecastResponse response = forecastingService.forecastDemand(

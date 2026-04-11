@@ -61,6 +61,24 @@ public class DatabaseEnvironmentPostProcessor implements EnvironmentPostProcesso
 
         System.out.println("Found " + urlKey + ": " + maskPassword(url));
 
+        // Skip H2 database URLs
+        if (url.contains("h2:") || url.contains("H2:")) {
+            System.out.println("Skipping H2 database URL processing");
+            return;
+        }
+
+        // Only process PostgreSQL URLs (both jdbc:postgresql:// and postgresql:// formats)
+        boolean isPostgresql = url.startsWith("postgresql://") ||
+                               url.startsWith("jdbc:postgresql://") ||
+                               url.startsWith("jdbc:postgresql:") ||
+                               (urlKey.equals(DATABASE_URL_KEY) && url.contains("postgresql")) ||
+                               (urlKey.equals(SPRING_DATASOURCE_URL_KEY) && url.contains("postgresql"));
+
+        if (!isPostgresql) {
+            System.out.println("Skipping non-PostgreSQL URL processing");
+            return;
+        }
+
         try {
             // Parse the connection string
             ParsedConnection parsed = parseConnectionString(url);
@@ -68,21 +86,46 @@ public class DatabaseEnvironmentPostProcessor implements EnvironmentPostProcesso
             // Build properties map
             Map<String, Object> properties = new HashMap<>();
 
-            // Set the JDBC URL (without username/password in URL)
-            String jdbcUrl = String.format("jdbc:postgresql://%s:%d/%s",
-                parsed.host, parsed.port, parsed.database);
-            System.out.println("Setting spring.datasource.url to: " + jdbcUrl);
+            // Set the JDBC URL (include username/password if available)
+            String jdbcUrl;
+            StringBuilder urlBuilder = new StringBuilder();
+            urlBuilder.append(String.format("jdbc:postgresql://%s:%d/%s",
+                parsed.host, parsed.port, parsed.database));
+
+            // Add query parameters
+            boolean hasQueryParam = false;
+            if (parsed.username != null && !parsed.username.isEmpty() && parsed.password != null) {
+                urlBuilder.append("?user=").append(parsed.username)
+                          .append("&password=").append(parsed.password);
+                hasQueryParam = true;
+            }
+
+            if (parsed.query != null && !parsed.query.isEmpty()) {
+                if (hasQueryParam) {
+                    urlBuilder.append("&").append(parsed.query);
+                } else {
+                    urlBuilder.append("?").append(parsed.query);
+                }
+            }
+
+            jdbcUrl = urlBuilder.toString();
+
+            System.out.println("Setting spring.datasource.url to: " + maskPassword(jdbcUrl));
             properties.put("spring.datasource.url", jdbcUrl);
 
-            // Set username and password as separate properties
-            System.out.println("Setting spring.datasource.username to: " + parsed.username);
-            properties.put("spring.datasource.username", parsed.username);
-            properties.put("spring.datasource.password", parsed.password);
+            // Also set separate username/password properties for compatibility
+            if (parsed.username != null && !parsed.username.isEmpty()) {
+                System.out.println("Setting spring.datasource.username to: " + parsed.username);
+                properties.put("spring.datasource.username", parsed.username);
+                properties.put("spring.datasource.password", parsed.password);
 
-            // Also set uppercase versions for compatibility
+                // Also set uppercase versions for compatibility
+                properties.put("SPRING_DATASOURCE_USERNAME", parsed.username);
+                properties.put("SPRING_DATASOURCE_PASSWORD", parsed.password);
+            }
+
+            // Always set the URL properties
             properties.put("SPRING_DATASOURCE_URL", jdbcUrl);
-            properties.put("SPRING_DATASOURCE_USERNAME", parsed.username);
-            properties.put("SPRING_DATASOURCE_PASSWORD", parsed.password);
 
             // Add properties to environment
             addProperties(environment, properties);
@@ -114,14 +157,51 @@ public class DatabaseEnvironmentPostProcessor implements EnvironmentPostProcesso
 
         URI uri = new URI(uriString);
 
-        // Extract username and password
+        // Extract username and password - first try userInfo (for postgresql://user:pass@host format)
         String userInfo = uri.getUserInfo();
         if (userInfo != null) {
             String[] parts = userInfo.split(":");
             result.username = parts[0];
             result.password = parts.length > 1 ? parts[1] : "";
-        } else {
+        }
+
+        // Process query parameters
+        String query = uri.getQuery();
+        if (query != null) {
+            StringBuilder remainingQuery = new StringBuilder();
+            String[] params = query.split("&");
+            for (String param : params) {
+                String[] keyValue = param.split("=");
+                if (keyValue.length == 2) {
+                    if ("user".equals(keyValue[0])) {
+                        result.username = keyValue[1];
+                    } else if ("password".equals(keyValue[0])) {
+                        result.password = keyValue[1];
+                    } else {
+                        // Keep other query parameters
+                        if (remainingQuery.length() > 0) {
+                            remainingQuery.append("&");
+                        }
+                        remainingQuery.append(param);
+                    }
+                } else if (keyValue.length == 1) {
+                    // Parameter without value (e.g., "sslmode=require" split gives ["sslmode", "require"])
+                    // Actually, "sslmode=require".split("=") gives ["sslmode", "require"], length 2
+                    // Handle case where param doesn't have "="
+                    if (remainingQuery.length() > 0) {
+                        remainingQuery.append("&");
+                    }
+                    remainingQuery.append(param);
+                }
+            }
+            result.query = remainingQuery.length() > 0 ? remainingQuery.toString() : null;
+        }
+
+        // If username/password not found, set empty
+        if (result.username == null) {
             result.username = "";
+        }
+        if (result.password == null) {
             result.password = "";
         }
 
@@ -146,6 +226,7 @@ public class DatabaseEnvironmentPostProcessor implements EnvironmentPostProcesso
         String database;
         String username;
         String password;
+        String query; // Original query parameters (without user/password if extracted)
     }
 
     private String ensureJdbcPrefix(String url) {
@@ -161,6 +242,11 @@ public class DatabaseEnvironmentPostProcessor implements EnvironmentPostProcesso
         // If starts with "postgresql://", prepend "jdbc:"
         if (url.startsWith("postgresql://")) {
             return "jdbc:" + url;
+        }
+
+        // For H2 URLs, don't add jdbc: prefix (they already have it or don't need it)
+        if (url.contains("h2:") || url.contains("H2:")) {
+            return url;
         }
 
         // For any other URL that doesn't start with "jdbc:", prepend it

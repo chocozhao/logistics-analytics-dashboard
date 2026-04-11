@@ -1,24 +1,161 @@
 -- Sample data for H2 development
--- Insert test orders for development and testing
+-- Generates 500 realistic order records covering 2024-01-01 to 2026-04-05
+-- Ensures continuous data for forecasting (especially Oct 2024 - Mar 2025)
 
-INSERT INTO orders (order_date, promised_delivery_date, actual_delivery_date, status, carrier, destination_city, destination_state, destination_region, order_value, sku, quantity) VALUES
-('2024-01-15', '2024-01-20', '2024-01-19', 'delivered', 'UPS', 'New York', 'NY', 'Northeast', 1250.50, 'SKU001', 5),
-('2024-01-16', '2024-01-22', '2024-01-23', 'delivered', 'FedEx', 'Los Angeles', 'CA', 'West', 890.75, 'SKU002', 3),
-('2024-01-17', '2024-01-21', '2024-01-20', 'delivered', 'DHL', 'Chicago', 'IL', 'Midwest', 2100.00, 'SKU003', 10),
-('2024-01-18', '2024-01-23', '2024-01-25', 'delivered', 'UPS', 'Houston', 'TX', 'South', 450.25, 'SKU004', 2),
-('2024-01-19', '2024-01-24', '2024-01-24', 'delivered', 'FedEx', 'Phoenix', 'AZ', 'West', 1200.00, 'SKU005', 6),
-('2024-01-20', '2024-01-25', NULL, 'in_transit', 'DHL', 'Philadelphia', 'PA', 'Northeast', 780.50, 'SKU006', 4),
-('2024-01-21', '2024-01-26', NULL, 'in_transit', 'UPS', 'San Antonio', 'TX', 'South', 950.00, 'SKU007', 5),
-('2024-01-22', '2024-01-27', NULL, 'pending', 'FedEx', 'San Diego', 'CA', 'West', 320.75, 'SKU008', 1),
-('2024-01-23', '2024-01-28', '2024-01-30', 'delivered', 'DHL', 'Dallas', 'TX', 'South', 1650.00, 'SKU009', 8),
-('2024-01-24', '2024-01-29', '2024-01-28', 'delivered', 'UPS', 'San Jose', 'CA', 'West', 210.25, 'SKU010', 1),
-('2024-02-01', '2024-02-06', '2024-02-05', 'delivered', 'FedEx', 'Austin', 'TX', 'South', 875.50, 'SKU011', 3),
-('2024-02-02', '2024-02-07', '2024-02-08', 'delivered', 'DHL', 'Jacksonville', 'FL', 'South', 1420.00, 'SKU012', 7),
-('2024-02-03', '2024-02-08', '2024-02-07', 'delivered', 'UPS', 'Fort Worth', 'TX', 'South', 530.75, 'SKU013', 2),
-('2024-02-04', '2024-02-09', NULL, 'in_transit', 'FedEx', 'Columbus', 'OH', 'Midwest', 1120.00, 'SKU014', 5),
-('2024-02-05', '2024-02-10', '2024-02-11', 'delivered', 'DHL', 'Charlotte', 'NC', 'South', 960.25, 'SKU015', 4),
-('2024-02-06', '2024-02-11', '2024-02-10', 'delivered', 'UPS', 'San Francisco', 'CA', 'West', 1850.50, 'SKU016', 9),
-('2024-02-07', '2024-02-12', NULL, 'pending', 'FedEx', 'Indianapolis', 'IN', 'Midwest', 420.00, 'SKU017', 2),
-('2024-02-08', '2024-02-13', '2024-02-14', 'delivered', 'DHL', 'Seattle', 'WA', 'West', 730.75, 'SKU018', 3),
-('2024-02-09', '2024-02-14', '2024-02-13', 'delivered', 'UPS', 'Denver', 'CO', 'West', 1520.00, 'SKU019', 7),
-('2024-02-10', '2024-02-15', '2024-02-16', 'delivered', 'FedEx', 'Washington', 'DC', 'Northeast', 890.25, 'SKU020', 4);
+-- Clear existing data if needed (commented out for safety)
+-- DELETE FROM orders;
+
+-- Insert generated data using H2-compatible syntax
+INSERT INTO orders (
+    order_date,
+    promised_delivery_date,
+    actual_delivery_date,
+    status,
+    carrier,
+    destination_city,
+    destination_state,
+    destination_region,
+    order_value,
+    sku,
+    quantity
+)
+WITH RECURSIVE numbers(n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM numbers WHERE n < 500
+),
+base_data AS (
+    SELECT
+        -- Order date: evenly distributed from 2024-01-01 to 2026-04-05 (825 days)
+        DATEADD('DAY', CAST(RAND() * 825 AS INTEGER), DATE '2024-01-01') AS order_date,
+
+        -- Promised delivery: 2-7 days after order date
+        DATEADD('DAY', 2 + CAST(RAND() * 5 AS INTEGER), DATEADD('DAY', CAST(RAND() * 825 AS INTEGER), DATE '2024-01-01')) AS promised_delivery_date,
+
+        -- Status and actual delivery (85% delivered, 10% in transit, 5% pending/cancelled)
+        CASE
+            WHEN RAND() < 0.85 THEN 'delivered'
+            WHEN RAND() < 0.95 THEN 'in_transit'
+            WHEN RAND() < 0.98 THEN 'pending'
+            ELSE 'cancelled'
+        END AS status,
+
+        -- Carrier with weighted distribution
+        CASE
+            WHEN RAND() < 0.35 THEN 'UPS'
+            WHEN RAND() < 0.60 THEN 'FedEx'
+            WHEN RAND() < 0.80 THEN 'DHL'
+            WHEN RAND() < 0.90 THEN 'USPS'
+            WHEN RAND() < 0.95 THEN 'Amazon Logistics'
+            ELSE 'Regional Carrier'
+        END AS carrier,
+
+        -- Destination city from predefined list
+        CASE CAST(RAND() * 20 AS INTEGER)
+            WHEN 0 THEN 'New York'
+            WHEN 1 THEN 'Los Angeles'
+            WHEN 2 THEN 'Chicago'
+            WHEN 3 THEN 'Houston'
+            WHEN 4 THEN 'Phoenix'
+            WHEN 5 THEN 'Philadelphia'
+            WHEN 6 THEN 'San Antonio'
+            WHEN 7 THEN 'San Diego'
+            WHEN 8 THEN 'Dallas'
+            WHEN 9 THEN 'San Jose'
+            WHEN 10 THEN 'Austin'
+            WHEN 11 THEN 'Jacksonville'
+            WHEN 12 THEN 'Fort Worth'
+            WHEN 13 THEN 'Columbus'
+            WHEN 14 THEN 'Charlotte'
+            WHEN 15 THEN 'San Francisco'
+            WHEN 16 THEN 'Indianapolis'
+            WHEN 17 THEN 'Seattle'
+            WHEN 18 THEN 'Denver'
+            WHEN 19 THEN 'Boston'
+            ELSE 'New York'
+        END AS destination_city,
+
+        -- Order value: $50-$5000, skewed toward lower values
+        CAST(50 + (RAND() * 4950 * (1 - POWER(RAND(), 2)) AS DECIMAL(10,2))) AS order_value,
+
+        -- SKU: random product code
+        CONCAT('SKU-', LPAD(CAST(1000 + CAST(RAND() * 8999 AS INTEGER) AS VARCHAR), 4, '0')) AS sku,
+
+        -- Quantity: 1-50 items
+        1 + CAST(RAND() * 49 AS INTEGER) AS quantity
+    FROM numbers
+),
+state_data AS (
+    SELECT
+        order_date,
+        promised_delivery_date,
+        CASE
+            WHEN status = 'delivered' THEN
+                -- Actual delivery: sometimes on time, sometimes delayed
+                DATEADD('DAY',
+                    CASE
+                        WHEN RAND() < 0.2 THEN 1 + CAST(RAND() * 3 AS INTEGER)
+                        ELSE 0
+                    END,
+                    promised_delivery_date)
+            ELSE NULL
+        END AS actual_delivery_date,
+        status,
+        carrier,
+        destination_city,
+        -- Destination state based on city
+        CASE destination_city
+            WHEN 'New York' THEN 'NY'
+            WHEN 'Los Angeles' THEN 'CA'
+            WHEN 'San Diego' THEN 'CA'
+            WHEN 'San Jose' THEN 'CA'
+            WHEN 'San Francisco' THEN 'CA'
+            WHEN 'Chicago' THEN 'IL'
+            WHEN 'Houston' THEN 'TX'
+            WHEN 'Dallas' THEN 'TX'
+            WHEN 'San Antonio' THEN 'TX'
+            WHEN 'Austin' THEN 'TX'
+            WHEN 'Fort Worth' THEN 'TX'
+            WHEN 'Phoenix' THEN 'AZ'
+            WHEN 'Philadelphia' THEN 'PA'
+            WHEN 'Jacksonville' THEN 'FL'
+            WHEN 'Columbus' THEN 'OH'
+            WHEN 'Charlotte' THEN 'NC'
+            WHEN 'Indianapolis' THEN 'IN'
+            WHEN 'Seattle' THEN 'WA'
+            WHEN 'Denver' THEN 'CO'
+            WHEN 'Boston' THEN 'MA'
+            ELSE 'CA'
+        END AS destination_state,
+        order_value,
+        sku,
+        quantity
+    FROM base_data
+)
+SELECT
+    order_date,
+    promised_delivery_date,
+    actual_delivery_date,
+    status,
+    carrier,
+    destination_city,
+    destination_state,
+    -- Destination region based on state
+    CASE
+        WHEN destination_state IN ('NY', 'NJ', 'PA', 'CT', 'MA', 'RI', 'NH', 'VT', 'ME') THEN 'Northeast'
+        WHEN destination_state IN ('CA', 'OR', 'WA', 'NV', 'AZ', 'UT', 'CO', 'NM', 'WY', 'MT', 'ID') THEN 'West'
+        WHEN destination_state IN ('TX', 'OK', 'AR', 'LA', 'MS', 'AL', 'GA', 'FL', 'SC', 'NC', 'TN', 'KY') THEN 'South'
+        WHEN destination_state IN ('IL', 'IN', 'OH', 'MI', 'WI', 'MN', 'IA', 'MO', 'KS', 'NE', 'SD', 'ND') THEN 'Midwest'
+        ELSE 'Other'
+    END AS destination_region,
+    order_value,
+    sku,
+    quantity
+FROM state_data
+ORDER BY order_date;
+
+-- Verify data insertion
+-- SELECT COUNT(*) AS total_orders FROM orders;
+-- SELECT MIN(order_date), MAX(order_date) FROM orders;
+-- SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY COUNT(*) DESC;
+-- SELECT carrier, COUNT(*) FROM orders GROUP BY carrier ORDER BY COUNT(*) DESC;

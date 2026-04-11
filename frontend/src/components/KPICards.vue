@@ -8,44 +8,44 @@ const kpis = computed(() => dashboardStore.kpis)
 
 const kpiCards = computed(() => [
   {
-    title: 'Total Orders',
+    title: '总订单数',
     value: kpis.value?.totalOrders || 0,
     icon: 'Document',
     color: '#409eff',
     trend: null,
-    description: 'Total orders in selected period'
+    description: '选定期间内的总订单数'
   },
   {
-    title: 'Delivered Orders',
+    title: '已交货订单',
     value: kpis.value?.deliveredOrders || 0,
     icon: 'Check',
     color: '#67c23a',
     trend: null,
-    description: 'Successfully delivered orders'
+    description: '成功交货的订单'
   },
   {
-    title: 'Delayed Orders',
+    title: '延迟订单',
     value: kpis.value?.delayedOrders || 0,
     icon: 'Clock',
     color: '#e6a23c',
     trend: null,
-    description: 'Orders delivered after promised date'
+    description: '在承诺日期之后交货的订单'
   },
   {
-    title: 'On-Time Rate',
+    title: '准时率',
     value: kpis.value?.onTimeRate ? `${kpis.value.onTimeRate}%` : '0%',
     icon: 'SuccessFilled',
     color: '#67c23a',
     trend: null,
-    description: 'Percentage of orders delivered on time'
+    description: '准时交货的订单百分比'
   },
   {
-    title: 'Avg Delivery Days',
+    title: '平均交货天数',
     value: kpis.value?.avgDeliveryDays ? kpis.value.avgDeliveryDays.toFixed(1) : '0.0',
     icon: 'Timer',
     color: '#909399',
     trend: null,
-    description: 'Average days from order to delivery'
+    description: '从下单到交货的平均天数'
   }
 ])
 </script>

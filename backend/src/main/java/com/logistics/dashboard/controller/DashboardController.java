@@ -2,7 +2,6 @@ package com.logistics.dashboard.controller;
 
 import com.logistics.dashboard.dto.*;
 import com.logistics.dashboard.service.DashboardService;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -15,11 +14,15 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/dashboard")
-@RequiredArgsConstructor
+@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"})
 public class DashboardController {
 
     private static final Logger log = LoggerFactory.getLogger(DashboardController.class);
     private final DashboardService dashboardService;
+
+    public DashboardController(DashboardService dashboardService) {
+        this.dashboardService = dashboardService;
+    }
 
     @GetMapping("/kpis")
     public ResponseEntity<KpiResponse> getKPIs(
@@ -66,7 +69,7 @@ public class DashboardController {
         log.info("GET /api/dashboard/delivery-performance - granularity={}, startDate={}, endDate={}",
                 granularity, startDate, endDate);
 
-        if (!Arrays.asList("week", "month").contains(granularity)) {
+        if (!Arrays.asList("day", "week", "month").contains(granularity)) {
             return ResponseEntity.badRequest().build();
         }
 

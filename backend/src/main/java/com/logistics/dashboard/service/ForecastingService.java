@@ -32,7 +32,7 @@ public class ForecastingService {
     public ForecastResponse forecastDemand(String granularity, int periods,
                                            LocalDate startDate, LocalDate endDate,
                                            List<String> carriers, List<String> regions) {
-        log.info("Forecasting demand with granularity {} for {} periods from {} to {}",
+        log.info("预测需求：粒度 {}，周期数 {}，时间范围 {} 到 {}",
                 granularity, periods, startDate, endDate);
 
         try {
@@ -42,7 +42,7 @@ public class ForecastingService {
 
             if (historicalData.getData().isEmpty()) {
                 return createEmptyForecast(granularity, periods,
-                        "No historical data available for forecasting");
+                        "无历史数据可用于预测");
             }
 
             // Convert to double array for analysis
@@ -81,9 +81,9 @@ public class ForecastingService {
             );
 
         } catch (Exception e) {
-            log.error("Error in forecasting: {}", e.getMessage(), e);
+            log.error("预测出错: {}", e.getMessage(), e);
             return createErrorForecast(granularity, periods,
-                    "Forecasting failed: " + e.getMessage());
+                    "预测失败: " + e.getMessage());
         }
     }
 
@@ -95,7 +95,7 @@ public class ForecastingService {
         // We'll use a grid search to find best alpha
 
         if (values.length < 3) {
-            log.warn("Insufficient data for exponential smoothing (n={}), using linear regression", values.length);
+            log.warn("指数平滑数据不足 (n={})，使用线性回归", values.length);
             return tryLinearRegression(values, periods);
         }
 
@@ -115,12 +115,12 @@ public class ForecastingService {
             }
         }
 
-        log.info("Selected alpha={} with MSE={}", bestAlpha, bestMSE);
+        log.info("选择的alpha={}，MSE={}", bestAlpha, bestMSE);
 
         // Generate forecasts using best alpha
         double[] forecasts = generateSESForecasts(values, bestAlpha, periods);
 
-        return new ForecastResult(forecasts, "Exponential Smoothing (alpha=" +
+        return new ForecastResult(forecasts, "指数平滑法 (alpha=" +
                 String.format("%.2f", bestAlpha) + ")");
     }
 
@@ -195,7 +195,7 @@ public class ForecastingService {
             forecasts[i] = regression.predict(values.length + i);
         }
 
-        return new ForecastResult(forecasts, "Linear Regression");
+        return new ForecastResult(forecasts, "线性回归");
     }
 
     /**
@@ -219,7 +219,7 @@ public class ForecastingService {
      */
     private String generateRecommendations(double[] forecasts, String algorithm) {
         if (forecasts.length == 0) {
-            return "No forecast generated.";
+            return "未生成预测。";
         }
 
         double avgForecast = 0;
@@ -238,11 +238,11 @@ public class ForecastingService {
         }
 
         return String.format(
-                "Based on %s forecast:\n" +
-                "- Average expected demand: %.0f orders\n" +
-                "- Recommended safety stock: %.0f orders (20%% buffer)\n" +
-                "- Forecast range: %.0f to %.0f orders\n" +
-                "- Consider adjusting inventory levels accordingly.",
+                "基于%s预测：\n" +
+                "- 平均预期需求：%.0f 订单\n" +
+                "- 建议安全库存：%.0f 订单 (20%% 缓冲)\n" +
+                "- 预测范围：%.0f 到 %.0f 订单\n" +
+                "- 请相应调整库存水平。",
                 algorithm, avgForecast, safetyStock, minForecast, maxForecast
         );
     }

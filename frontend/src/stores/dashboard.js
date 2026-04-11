@@ -11,117 +11,147 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const deliveryPerformanceData = ref([])
   const carrierBreakdownData = ref([])
   const forecastData = ref(null)
-  const loading = ref(false)
+  const loadingCount = ref(0)
+  const loading = computed(() => loadingCount.value > 0)
   const error = ref(null)
 
   // Filters
-  const dateRange = ref([new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), new Date()]) // Last 30 days
+  const dateRange = (() => {
+    // Database has data from 2024-01-01 to 2025-03-31
+    // Use a default range within this period
+    const startDate = new Date('2024-01-01')
+    const endDate = new Date('2024-01-31')
+    console.log('dateRange initialization:', { startDate, endDate, startDateType: typeof startDate, endDateType: typeof endDate })
+    return ref([startDate, endDate])
+  })() // Default to January 2024 (within database range)
   const selectedCarriers = ref([])
   const selectedRegions = ref([])
 
   // Getters
   const startDate = computed(() => {
-    return dateRange.value[0] ? formatDate(dateRange.value[0]) : null
+    const result = dateRange.value[0] ? formatDate(dateRange.value[0]) : null
+    console.log('startDate computed:', { raw: dateRange.value[0], formatted: result })
+    return result
   })
 
   const endDate = computed(() => {
-    return dateRange.value[1] ? formatDate(dateRange.value[1]) : null
+    const result = dateRange.value[1] ? formatDate(dateRange.value[1]) : null
+    console.log('endDate computed:', { raw: dateRange.value[1], formatted: result })
+    return result
   })
 
   const filters = computed(() => {
-    return {
+    const filtersObj = {
       startDate: startDate.value,
       endDate: endDate.value,
       carriers: selectedCarriers.value.length > 0 ? selectedCarriers.value : null,
       regions: selectedRegions.value.length > 0 ? selectedRegions.value : null
     }
+    console.log('filters computed:', filtersObj)
+    return filtersObj
   })
 
   // Actions
   async function fetchKPIs() {
-    loading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const params = buildParams(filters.value)
+      console.log('fetchKPIs params:', Object.fromEntries(params.entries()))
+      console.log('fetchKPIs filters:', filters.value)
       const response = await axios.get(`${API_BASE_URL}/dashboard/kpis`, { params })
+      console.log('fetchKPIs response:', response.data)
       kpis.value = response.data
     } catch (err) {
-      error.value = err.message
-      console.error('Error fetching KPIs:', err)
+      error.value = '加载KPI数据失败: ' + err.message
+      console.error('Error fetching KPIs:', err.response ? err.response.data : err.message, err)
     } finally {
-      loading.value = false
+      loadingCount.value--
     }
   }
 
   async function fetchOrderVolume(granularity = 'day') {
-    loading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const params = buildParams({ ...filters.value, granularity })
       const response = await axios.get(`${API_BASE_URL}/dashboard/order-volume`, { params })
-      orderVolumeData.value = response.data
+      console.log('fetchOrderVolume response:', response.data)
+      orderVolumeData.value = response.data.data
     } catch (err) {
-      error.value = err.message
-      console.error('Error fetching order volume:', err)
+      error.value = '加载订单量数据失败: ' + err.message
+      console.error('Error fetching order volume:', err.response ? err.response.data : err.message, err)
     } finally {
-      loading.value = false
+      loadingCount.value--
     }
   }
 
   async function fetchDeliveryPerformance(granularity = 'week') {
-    loading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const params = buildParams({ ...filters.value, granularity })
       const response = await axios.get(`${API_BASE_URL}/dashboard/delivery-performance`, { params })
-      deliveryPerformanceData.value = response.data
+      console.log('fetchDeliveryPerformance response:', response.data)
+      deliveryPerformanceData.value = response.data.data
     } catch (err) {
-      error.value = err.message
-      console.error('Error fetching delivery performance:', err)
+      error.value = '加载交货性能数据失败: ' + err.message
+      console.error('Error fetching delivery performance:', err.response ? err.response.data : err.message, err)
     } finally {
-      loading.value = false
+      loadingCount.value--
     }
   }
 
   async function fetchCarrierBreakdown() {
-    loading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const params = buildParams(filters.value)
       const response = await axios.get(`${API_BASE_URL}/dashboard/carrier-breakdown`, { params })
-      carrierBreakdownData.value = response.data
+      console.log('fetchCarrierBreakdown response:', response.data)
+      carrierBreakdownData.value = response.data.data
     } catch (err) {
-      error.value = err.message
-      console.error('Error fetching carrier breakdown:', err)
+      error.value = '加载承运商细分数据失败: ' + err.message
+      console.error('Error fetching carrier breakdown:', err.response ? err.response.data : err.message, err)
     } finally {
-      loading.value = false
+      loadingCount.value--
     }
   }
 
-  async function fetchForecast(granularity = 'week', periods = 4) {
-    loading.value = true
+  async function fetchForecast(granularity = 'week', periods = 4, customStartDate = null, customEndDate = null) {
+    console.log('fetchForecast called with:', { granularity, periods, customStartDate, customEndDate })
+    console.log('fetchForecast - startDate.value:', startDate.value, 'endDate.value:', endDate.value)
+    console.log('fetchForecast - filters.value:', filters.value)
+    loadingCount.value++
     error.value = null
     try {
+      // For forecasting, use database-appropriate date range if not specified
+      // Database has data from 2024-01-01 to 2025-03-31
+      const forecastStartDate = customStartDate || '2024-10-01' // October 1, 2024 for enough historical data
+      const forecastEndDate = customEndDate || '2025-03-31'     // March 31, 2025 (end of database)
+
       const request = {
         granularity,
         periods,
-        startDate: startDate.value,
-        endDate: endDate.value,
+        startDate: forecastStartDate,
+        endDate: forecastEndDate,
         carriers: filters.value.carriers,
         regions: filters.value.regions
       }
+      console.log('fetchForecast request:', request)
       const response = await axios.post(`${API_BASE_URL}/forecast`, request)
+      console.log('fetchForecast response:', response.data)
       forecastData.value = response.data
     } catch (err) {
-      error.value = err.message
-      console.error('Error fetching forecast:', err)
+      error.value = '加载预测数据失败: ' + err.message
+      console.error('Error fetching forecast:', err.response ? err.response.data : err.message, err)
     } finally {
-      loading.value = false
+      loadingCount.value--
     }
   }
 
   async function submitNaturalLanguageQuery(question) {
-    loading.value = true
+    loadingCount.value++
     error.value = null
     try {
       const request = {
@@ -134,32 +164,58 @@ export const useDashboardStore = defineStore('dashboard', () => {
       const response = await axios.post(`${API_BASE_URL}/query`, request)
       return response.data
     } catch (err) {
-      error.value = err.message
+      error.value = '提交自然语言查询失败: ' + err.message
       console.error('Error submitting query:', err)
       throw err
     } finally {
-      loading.value = false
+      loadingCount.value--
     }
   }
 
-  function resetFilters() {
-    dateRange.value = [new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), new Date()]
+  async function refreshDashboardData() {
+    error.value = null
+    try {
+      await Promise.all([
+        fetchKPIs(),
+        fetchOrderVolume(),
+        fetchDeliveryPerformance(),
+        fetchCarrierBreakdown()
+      ])
+    } catch (err) {
+      error.value = '刷新仪表板数据失败: ' + err.message
+      console.error('Error refreshing dashboard data:', err)
+    }
+  }
+
+  async function resetFilters() {
+    // Reset to a reasonable range within database bounds
+    dateRange.value = [new Date('2024-01-01'), new Date('2024-03-31')] // 3 months of data
     selectedCarriers.value = []
     selectedRegions.value = []
+    // Refresh data after resetting filters
+    await refreshDashboardData()
   }
 
   // Helper functions
   function buildParams(filters) {
+    console.log('buildParams filters:', filters)
     const params = new URLSearchParams()
-    if (filters.startDate) params.append('startDate', filters.startDate)
-    if (filters.endDate) params.append('endDate', filters.endDate)
+    if (filters.startDate) {
+      console.log('startDate raw:', filters.startDate, 'formatted:', formatDate(filters.startDate))
+      params.append('startDate', filters.startDate)
+    }
+    if (filters.endDate) {
+      console.log('endDate raw:', filters.endDate, 'formatted:', formatDate(filters.endDate))
+      params.append('endDate', filters.endDate)
+    }
     if (filters.carriers) {
-      filters.carriers.forEach(carrier => params.append('carriers', carrier))
+      filters.carriers.forEach(carrier => params.append('carrier', carrier))
     }
     if (filters.regions) {
-      filters.regions.forEach(region => params.append('regions', region))
+      filters.regions.forEach(region => params.append('region', region))
     }
     if (filters.granularity) params.append('granularity', filters.granularity)
+    console.log('buildParams result:', Object.fromEntries(params.entries()))
     return params
   }
 
@@ -197,6 +253,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     fetchCarrierBreakdown,
     fetchForecast,
     submitNaturalLanguageQuery,
-    resetFilters
+    resetFilters,
+    refreshDashboardData
   }
 })

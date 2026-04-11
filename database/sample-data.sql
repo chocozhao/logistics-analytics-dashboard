@@ -1,6 +1,6 @@
 -- Sample data generation for Logistics Analytics Dashboard
--- Generates 10,000+ realistic order records for development and testing
--- Date range: 2024-01-01 to 2025-03-31 (15 months)
+-- Generates 20,000+ realistic order records for development and testing
+-- Date range: 2024-01-01 to 2026-04-05 (28 months)
 
 -- Clear existing data (optional)
 -- TRUNCATE TABLE orders RESTART IDENTITY;
@@ -22,17 +22,17 @@ INSERT INTO orders (
 WITH base_data AS (
     SELECT
         -- Order date: random date between 2024-01-01 and 2025-03-31
-        '2024-01-01'::date + (random() * 455)::integer AS order_date,
+        '2024-01-01'::date + (random() * 825)::integer AS order_date,
 
         -- Promised delivery: 2-7 days after order date
-        ('2024-01-01'::date + (random() * 455)::integer) + (2 + random() * 5)::integer AS promised_delivery_date,
+        ('2024-01-01'::date + (random() * 825)::integer) + (2 + random() * 5)::integer AS promised_delivery_date,
 
         -- Actual delivery:
         CASE
             -- 85% delivered, 10% in transit, 5% pending/cancelled
             WHEN random() < 0.85 THEN
                 -- Delivered: sometimes on time, sometimes delayed
-                ('2024-01-01'::date + (random() * 455)::integer) +
+                ('2024-01-01'::date + (random() * 825)::integer) +
                 (2 + random() * 5)::integer +
                 CASE WHEN random() < 0.2 THEN (1 + random() * 3)::integer ELSE 0 END
             ELSE NULL
@@ -70,7 +70,7 @@ WITH base_data AS (
 
         -- Quantity: 1-50 items
         (1 + random() * 49)::integer AS quantity
-    FROM generate_series(1, 10000)
+    FROM generate_series(1, 20000)
 ),
 state_data AS (
     SELECT

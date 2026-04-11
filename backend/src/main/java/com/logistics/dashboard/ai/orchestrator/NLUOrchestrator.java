@@ -21,6 +21,28 @@ import java.math.BigDecimal;
 @Service
 public class NLUOrchestrator {
 
+    // Keywords for data-related questions
+    private static final Set<String> DATA_KEYWORDS = Set.of(
+        "订单", "order", "订购", "购买", "销量",
+        "交付", "delivery", "交货", "运输", "送达",
+        "承运商", "carrier", "快递", "物流公司", "运输商",
+        "趋势", "trend", "变化", "增长", "下降",
+        "性能", "performance", "效率", "准时", "延迟",
+        "地区", "region", "区域", "城市", "地点",
+        "预测", "forecast", "预计", "未来", "kpi",
+        "指标", "metric", "统计", "数字", "数量"
+    );
+
+    // Keywords for unrelated system questions (should not show visualizations)
+    private static final Set<String> UNRELATED_KEYWORDS = Set.of(
+        "你是谁", "你是什么", "你叫什么", "你从哪来",
+        "你好", "hello", "hi", "你好吗", "how are you",
+        "帮助", "help", "说明", "解释", "教程",
+        "天气", "time", "日期", "今天星期几", "现在几点",
+        "who are you", "what are you", "what is your name", "where are you from",
+        "thanks", "thank you", "bye", "goodbye", "see you"
+    );
+
     private ChatLanguageModel model;
     private AiAssistant assistant;
     private final AiTools aiTools;
@@ -34,11 +56,16 @@ public class NLUOrchestrator {
         // Check if API key is provided
         if (apiKey == null || apiKey.trim().isEmpty()) {
             System.out.println("WARNING: OPENAI_API_KEY not provided. Natural Language Query functionality will be limited.");
+            System.out.println("DEBUG: API key is null or empty");
             // Create a mock model that returns placeholder responses
             this.model = null;
             this.assistant = null;
         } else {
             try {
+                System.out.println("DEBUG: Attempting to initialize AI model with provided API key");
+                System.out.println("DEBUG: API key length: " + apiKey.length());
+                System.out.println("DEBUG: API key prefix: " + (apiKey.length() > 8 ? apiKey.substring(0, 8) + "..." : apiKey));
+
                 // Create chat model with DeepSeek (OpenAI-compatible API)
                 this.model = dev.langchain4j.model.openai.OpenAiChatModel.builder()
                         .apiKey(apiKey)
@@ -60,7 +87,9 @@ public class NLUOrchestrator {
 
                 System.out.println("AI model initialized successfully with DeepSeek API");
             } catch (Exception e) {
-                System.out.println("WARNING: Failed to initialize AI model. Natural Language Query functionality will be limited. Error: " + e.getMessage());
+                System.out.println("WARNING: Failed to initialize AI model. Natural Language Query functionality will be limited.");
+                System.out.println("DEBUG: Error details: " + e.getClass().getName() + ": " + e.getMessage());
+                e.printStackTrace();
                 this.model = null;
                 this.assistant = null;
             }
@@ -71,9 +100,13 @@ public class NLUOrchestrator {
      * Process a natural language query and return structured response
      */
     public QueryResponse processQuery(QueryRequest request) {
+        System.out.println("DEBUG processQuery: starting with question: " + request.getQuestion());
+        System.out.println("DEBUG processQuery: model is " + (model == null ? "null" : "available"));
+        System.out.println("DEBUG processQuery: assistant is " + (assistant == null ? "null" : "available"));
         try {
             // Check if AI model is available
             if (model == null || assistant == null) {
+                System.out.println("DEBUG processQuery: AI model not available, using mock data path");
                 QueryResponse placeholderResponse = new QueryResponse();
                 placeholderResponse.setAnswer("自然语言查询功能需要配置AI API密钥。请设置OPENAI_API_KEY环境变量。");
                 placeholderResponse.setExplanation("此功能使用DeepSeek的AI模型来解释关于物流数据的自然语言问题。");
@@ -103,7 +136,7 @@ public class NLUOrchestrator {
             // In a full implementation, we would parse the AI's tool calls and execute them
             QueryResponse response = new QueryResponse();
             response.setAnswer(aiResponse);
-            response.setExplanation("The AI interpreted your question and selected appropriate analytical tools.");
+            response.setExplanation("AI已解读您的问题并选择了合适的分析工具。");
             response.setChartType("none");
 
             // Add filters if provided
@@ -196,44 +229,40 @@ public class NLUOrchestrator {
 
     /**
      * Check if a question is related to logistics data
+     * Returns false for system interaction questions (e.g., "who are you")
+     * Returns true only if question contains logistics-related keywords
+     * Returns false by default for ambiguous questions
      */
     private boolean isDataRelatedQuestion(String question) {
-        if (question == null || question.isEmpty()) return false;
+        if (question == null || question.isEmpty()) {
+            System.out.println("DEBUG isDataRelatedQuestion: null or empty question, returning false");
+            return false;
+        }
 
         String lower = question.toLowerCase();
+        System.out.println("DEBUG isDataRelatedQuestion: checking question: " + question + ", lower: " + lower);
+        System.out.println("DEBUG isDataRelatedQuestion: UNRELATED_KEYWORDS size: " + UNRELATED_KEYWORDS.size() + ", DATA_KEYWORDS size: " + DATA_KEYWORDS.size());
 
-        // 物流数据相关关键词
-        String[] dataKeywords = {
-            "订单", "order", "订购", "购买", "销量",
-            "交付", "delivery", "交货", "运输", "送达",
-            "承运商", "carrier", "快递", "物流公司", "运输商",
-            "趋势", "trend", "变化", "增长", "下降",
-            "性能", "performance", "效率", "准时", "延迟",
-            "地区", "region", "区域", "城市", "地点",
-            "预测", "forecast", "预计", "未来", "kpi",
-            "指标", "metric", "统计", "数字", "数量"
-        };
-
-        // 系统无关关键词（应跳过可视化）
-        String[] unrelatedKeywords = {
-            "你是谁", "你是什么", "你叫什么", "你从哪来",
-            "你好", "hello", "hi", "你好吗", "how are you",
-            "帮助", "help", "说明", "解释", "教程",
-            "天气", "time", "日期", "今天星期几", "现在几点"
-        };
-
-        // 检查是否包含无关关键词
-        for (String keyword : unrelatedKeywords) {
-            if (lower.contains(keyword)) return false;
+        // Check for unrelated system interaction keywords first
+        for (String keyword : UNRELATED_KEYWORDS) {
+            if (lower.contains(keyword)) {
+                System.out.println("DEBUG isDataRelatedQuestion: found unrelated keyword: " + keyword + ", returning false");
+                return false;
+            }
         }
 
-        // 检查是否包含物流关键词
-        for (String keyword : dataKeywords) {
-            if (lower.contains(keyword)) return true;
+        // Check for logistics data keywords
+        for (String keyword : DATA_KEYWORDS) {
+            if (lower.contains(keyword)) {
+                System.out.println("DEBUG isDataRelatedQuestion: found data keyword: " + keyword + ", returning true");
+                return true;
+            }
         }
 
-        // 默认：假设与数据相关（保持现有行为）
-        return true;
+        // Default: assume NOT data-related for ambiguous questions
+        // This prevents showing charts for unclear questions
+        System.out.println("DEBUG isDataRelatedQuestion: no keywords found, returning false (ambiguous question)");
+        return false;
     }
 
     /**
@@ -243,14 +272,14 @@ public class NLUOrchestrator {
                                             String question, String explanation) {
         response.setExplanation(explanation);
 
-        // 设置默认指标
+        // Set default metrics
         List<String> defaultMetrics = Arrays.asList("系统交互", "问题分类");
         response.setMetrics(defaultMetrics);
 
-        // 设置查询计划
-        response.setQueryPlan("系统检测到此问题与物流数据无关，提供通用回答。");
+        // Set query plan
+        response.setQueryPlan("系统检测到此问题与物流数据无关，提供通用响应。");
 
-        // 添加筛选条件
+        // Add filters if present in request
         if (request.getStartDate() != null || request.getEndDate() != null ||
             request.getCarriers() != null || request.getRegions() != null) {
             Map<String, Object> filters = new HashMap<>();
@@ -261,7 +290,7 @@ public class NLUOrchestrator {
             response.setFilters(filters);
         }
 
-        // 生成最小化原始数据
+        // Generate minimal raw data
         List<Map<String, Object>> rawData = new ArrayList<>();
         Map<String, Object> sampleRow = new HashMap<>();
         sampleRow.put("question", question);
@@ -280,8 +309,49 @@ public class NLUOrchestrator {
             question = "订单趋势";
         }
 
+        // Check if question is related to logistics data
+        boolean isDataRelated = isDataRelatedQuestion(question);
+        System.out.println("DEBUG populateResponseWithMockData: isDataRelated = " + isDataRelated + " for question: " + question);
+
+        if (!isDataRelated) {
+            System.out.println("DEBUG populateResponseWithMockData: non-data-related question, setting empty chart state");
+            // Non-data-related question: set empty chart state
+            response.setChartType("none");
+
+            // Create empty state chart data
+            Map<String, Object> emptyChartData = new HashMap<>();
+            emptyChartData.put("labels", new ArrayList<String>());
+            emptyChartData.put("values", new ArrayList<Long>());
+            emptyChartData.put("chartType", "none");
+            emptyChartData.put("message", "此问题与物流数据无关，无可视化数据。");
+
+            response.setChartData(emptyChartData);
+
+            // Set basic response fields (prevents blank query details)
+            populateBasicResponseFields(response, request, question, "This is a system interaction question, not related to logistics data analysis.");
+            return;
+        }
+
         String lowerQuestion = question.toLowerCase();
         Random random = ThreadLocalRandom.current();
+
+        // Ensure basic fields have default values for data-related questions
+        if (response.getExplanation() == null || response.getExplanation().isEmpty()) {
+            response.setExplanation("根据您的查询生成的分析结果。");
+        }
+
+        if (response.getMetrics() == null || response.getMetrics().isEmpty()) {
+            List<String> defaultMetrics = Arrays.asList("订单量", "交货性能", "承运商分析");
+            response.setMetrics(defaultMetrics);
+        }
+
+        if (response.getQueryPlan() == null || response.getQueryPlan().isEmpty()) {
+            if (model == null) {
+                response.setQueryPlan("使用模拟数据生成查询结果。当实际AI功能恢复时，将基于真实数据进行分析。");
+            } else {
+                response.setQueryPlan("AI功能正常，正在处理您的查询并使用模拟数据进行展示预览。");
+            }
+        }
 
         // Determine chart type based on question content
         if (lowerQuestion.contains("趋势") || lowerQuestion.contains("时间") || lowerQuestion.contains("order") || lowerQuestion.contains("trend")) {
@@ -315,26 +385,30 @@ public class NLUOrchestrator {
         // Set metrics based on question
         List<String> metrics = new ArrayList<>();
         if (lowerQuestion.contains("订单") || lowerQuestion.contains("order")) {
-            metrics.add("订单数量");
+            metrics.add("订单量");
             metrics.add("订单价值");
         }
         if (lowerQuestion.contains("交付") || lowerQuestion.contains("delivery")) {
-            metrics.add("准时交付率");
-            metrics.add("平均交付天数");
+            metrics.add("准时交货率");
+            metrics.add("平均交货天数");
             metrics.add("延迟订单数");
         }
         if (lowerQuestion.contains("承运商") || lowerQuestion.contains("carrier")) {
             metrics.add("承运商分布");
-            metrics.add("延迟率比较");
+            metrics.add("延迟率对比");
         }
         if (metrics.isEmpty()) {
             metrics.add("订单趋势");
-            metrics.add("交付表现");
+            metrics.add("交货性能");
         }
         response.setMetrics(metrics);
 
-        // Set query plan
-        response.setQueryPlan("由于AI服务暂时不可用，系统使用模拟数据展示查询结果。实际功能恢复后，将使用真实数据分析工具处理您的查询。");
+        // Set query plan based on AI availability
+        if (model == null) {
+            response.setQueryPlan("AI服务暂时不可用。系统正在使用模拟数据展示查询结果。当实际功能恢复时，将使用真实数据分析工具处理您的查询。");
+        } else {
+            response.setQueryPlan("AI功能正常。当前使用模拟数据进行展示预览，实际数据查询功能已就绪。");
+        }
 
         // Generate raw data (sample rows)
         List<Map<String, Object>> rawData = generateRawMockData(random);
@@ -364,7 +438,7 @@ public class NLUOrchestrator {
         response.setChartData(chartData);
         // Append mock data explanation to existing explanation if any
         String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示过去30天的订单趋势模拟数据。实际AI功能恢复后，将基于您的筛选条件提供真实的时间序列分析。";
+        String mockExplanation = "显示过去30天订单趋势的模拟数据。当实际AI功能恢复时，将根据您的筛选条件提供真实的时间序列分析。";
         if (existingExplanation == null || existingExplanation.isEmpty()) {
             response.setExplanation(mockExplanation);
         } else {
@@ -394,7 +468,7 @@ public class NLUOrchestrator {
         response.setChartData(chartData);
         // Append mock data explanation to existing explanation if any
         String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示各承运商的订单分布模拟数据。实际AI功能恢复后，将基于您的筛选条件提供真实的承运商表现分析。";
+        String mockExplanation = "显示各承运商订单分布的模拟数据。当实际AI功能恢复时，将根据您的筛选条件提供真实的承运商性能分析。";
         if (existingExplanation == null || existingExplanation.isEmpty()) {
             response.setExplanation(mockExplanation);
         } else {
@@ -428,7 +502,7 @@ public class NLUOrchestrator {
         response.setChartData(chartData);
         // Append mock data explanation to existing explanation if any
         String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示过去4周准时交付数量的模拟数据。实际AI功能恢复后，将基于您的筛选条件提供真实的交付性能分析。";
+        String mockExplanation = "显示过去4周准时交货数量的模拟数据。当实际AI功能恢复时，将根据您的筛选条件提供真实的交货性能分析。";
         if (existingExplanation == null || existingExplanation.isEmpty()) {
             response.setExplanation(mockExplanation);
         } else {
@@ -451,11 +525,11 @@ public class NLUOrchestrator {
         BigDecimal avgDeliveryDays = BigDecimal.valueOf(3.5 + random.nextDouble() * 2.5).setScale(2, BigDecimal.ROUND_HALF_UP); // 3.5-6.0 days
 
         // Create KPI summary for chart
-        labels.add("总订单");
+        labels.add("Total Orders");
         values.add(totalOrders);
-        labels.add("已交付");
+        labels.add("Delivered Orders");
         values.add(deliveredOrders);
-        labels.add("延迟订单");
+        labels.add("Delayed Orders");
         values.add(delayedOrders);
 
         chartData.put("labels", labels);
@@ -463,13 +537,13 @@ public class NLUOrchestrator {
         chartData.put("chartType", "bar");
         chartData.put("kpiSummary", Map.of(
             "onTimeRate", onTimeRate.toString() + "%",
-            "avgDeliveryDays", avgDeliveryDays.toString() + " 天"
+            "avgDeliveryDays", avgDeliveryDays.toString() + " days"
         ));
 
         response.setChartData(chartData);
         // Append mock data explanation to existing explanation if any
         String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示关键绩效指标的模拟数据。准时交付率: " + onTimeRate + "%，平均交付天数: " + avgDeliveryDays + "天。实际AI功能恢复后，将基于您的筛选条件提供真实的KPI分析。";
+        String mockExplanation = "显示关键绩效指标的模拟数据。准时交货率：" + onTimeRate + "%，平均交货天数：" + avgDeliveryDays + "天。当实际AI功能恢复时，将根据您的筛选条件提供真实的KPI分析。";
         if (existingExplanation == null || existingExplanation.isEmpty()) {
             response.setExplanation(mockExplanation);
         } else {

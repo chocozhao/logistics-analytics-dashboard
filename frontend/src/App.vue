@@ -13,6 +13,12 @@ const dashboardStore = useDashboardStore()
 const activeTab = ref('dashboard')
 
 onMounted(() => {
+  console.log('App mounted, starting dashboard data load...')
+  console.log('Initial dashboardStore.dateRange:', dashboardStore.dateRange.value)
+  console.log('Initial dashboardStore.startDate:', dashboardStore.startDate)
+  console.log('Initial dashboardStore.endDate:', dashboardStore.endDate)
+  console.log('Initial dashboardStore.filters:', dashboardStore.filters.value)
+
   dashboardStore.fetchKPIs()
   dashboardStore.fetchOrderVolume()
   dashboardStore.fetchDeliveryPerformance()
@@ -26,21 +32,21 @@ onMounted(() => {
 
     <el-main>
       <el-tabs v-model="activeTab" class="dashboard-tabs">
-        <el-tab-pane label="Dashboard" name="dashboard">
+        <el-tab-pane label="仪表板" name="dashboard">
           <div class="dashboard-content">
             <KPICards />
 
             <div class="charts-grid">
               <el-card class="chart-card">
                 <template #header>
-                  <h3>Order Volume Trend</h3>
+                  <h3>订单量趋势</h3>
                 </template>
                 <OrderVolumeChart />
               </el-card>
 
               <el-card class="chart-card">
                 <template #header>
-                  <h3>Delivery Performance</h3>
+                  <h3>交货性能</h3>
                 </template>
                 <DeliveryPerformanceChart />
               </el-card>
@@ -48,18 +54,18 @@ onMounted(() => {
 
             <el-card class="full-width-card">
               <template #header>
-                <h3>Carrier Performance Breakdown</h3>
+                <h3>承运商性能细分</h3>
               </template>
               <CarrierBreakdownChart />
             </el-card>
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="Natural Language Query" name="nlq">
+        <el-tab-pane label="自然语言查询" name="nlq">
           <NaturalLanguageQuery />
         </el-tab-pane>
 
-        <el-tab-pane label="Forecasting" name="forecast">
+        <el-tab-pane label="预测" name="forecast">
           <ForecastPanel />
         </el-tab-pane>
       </el-tabs>
@@ -98,6 +104,7 @@ onMounted(() => {
 
 .full-width-card {
   margin: 20px 0;
+  min-height: 400px;
 }
 
 @media (max-width: 1200px) {

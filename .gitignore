@@ -177,3 +177,9 @@ claude-progress.txt
 
 # Git worktrees
 .worktrees/
+
+# Application specific temporary files
+backend/*.out
+backend/cookies.txt
+.playwright-mcp/
+backend/src/test/java/com/logistics/dashboard/ai/
