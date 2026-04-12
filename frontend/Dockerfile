@@ -16,6 +16,9 @@ COPY . .
 # Use build-time environment variable with fallback
 ENV VITE_API_URL=${VITE_API_URL:-http://localhost:8080/api}
 
+# Debug: print environment variable
+RUN echo "构建时VITE_API_URL环境变量值为: ${VITE_API_URL}"
+
 # Build application
 RUN VITE_API_URL=${VITE_API_URL} npm run build
 

@@ -2,7 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
+console.log('VITE_API_URL环境变量:', import.meta.env.VITE_API_URL)
+console.log('当前环境模式:', import.meta.env.MODE, '是否为生产环境:', import.meta.env.PROD)
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:8080/api')
 
 export const useDashboardStore = defineStore('dashboard', () => {
   // State
