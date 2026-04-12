@@ -4,7 +4,10 @@ import axios from 'axios'
 
 console.log('VITE_API_URL环境变量:', import.meta.env.VITE_API_URL)
 console.log('当前环境模式:', import.meta.env.MODE, '是否为生产环境:', import.meta.env.PROD)
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:8080/api')
+// 在生产环境中，如果VITE_API_URL未设置，使用相对路径
+// 在开发环境中，使用localhost:8080作为回退
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:8080/api')
+console.log('API_BASE_URL计算值:', API_BASE_URL)
 
 export const useDashboardStore = defineStore('dashboard', () => {
   // State
