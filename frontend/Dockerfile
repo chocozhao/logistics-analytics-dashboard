@@ -12,15 +12,17 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Set environment variable for API URL
-# Use build-time environment variable with fallback
-ENV VITE_API_URL=${VITE_API_URL:-http://localhost:8080/api}
+# Set build argument for API URL with default value
+ARG VITE_API_URL=http://localhost:8080/api
 
 # Debug: print environment variable
 RUN echo "构建时VITE_API_URL环境变量值为: ${VITE_API_URL}"
 
+# Set as environment variable for Vite build
+ENV VITE_API_URL=${VITE_API_URL}
+
 # Build application
-RUN VITE_API_URL=${VITE_API_URL} npm run build
+RUN npm run build
 
 # Production stage
 FROM nginx:alpine
