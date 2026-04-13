@@ -134,8 +134,8 @@ This application can be deployed to Render.com for public access:
 5. **Configure environment variables** in Render dashboard:
    - `OPENAI_API_KEY`: Your OpenAI API key for natural language queries
 6. **Access your deployed application**:
-   - Frontend: `https://logistics-frontend.onrender.com`
-   - Backend API: `https://logistics-backend.onrender.com/api`
+   - Frontend: `https://logistics-analytics-dashboard-frontend.onrender.com/`
+   - Backend API: `https://logistics-analytics-dashboard-yuzn.onrender.com/api`
 
 **Note**: The first deployment may take 10-15 minutes to build and deploy all services.
 
@@ -183,7 +183,7 @@ VITE_API_URL=https://logistics-backend.onrender.com/api
 The system uses a structured approach to natural language queries:
 
 1. **User asks question** (e.g., "Which carrier has the highest delay rate?")
-2. **AI interprets question** using OpenAI GPT-3.5-turbo with a system prompt
+2. **AI interprets question** using deepseek-v3.2 with a system prompt
 3. **AI selects appropriate tool** from predefined tool definitions
 4. **Backend executes deterministic query** with validated parameters
 5. **Results formatted with explanation** including filters, metrics, query plan, and raw data
