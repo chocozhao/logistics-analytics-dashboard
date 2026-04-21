@@ -7,22 +7,12 @@ import OrderVolumeChart from './components/OrderVolumeChart.vue'
 import DeliveryPerformanceChart from './components/DeliveryPerformanceChart.vue'
 import CarrierBreakdownChart from './components/CarrierBreakdownChart.vue'
 import NaturalLanguageQuery from './components/NaturalLanguageQuery.vue'
-import ForecastPanel from './components/ForecastPanel.vue'
 
 const dashboardStore = useDashboardStore()
 const activeTab = ref('dashboard')
 
 onMounted(() => {
-  console.log('App mounted, starting dashboard data load...')
-  console.log('Initial dashboardStore.dateRange:', dashboardStore.dateRange.value)
-  console.log('Initial dashboardStore.startDate:', dashboardStore.startDate)
-  console.log('Initial dashboardStore.endDate:', dashboardStore.endDate)
-  console.log('Initial dashboardStore.filters:', dashboardStore.filters.value)
-
-  dashboardStore.fetchKPIs()
-  dashboardStore.fetchOrderVolume()
-  dashboardStore.fetchDeliveryPerformance()
-  dashboardStore.fetchCarrierBreakdown()
+  dashboardStore.refreshDashboardData()
 })
 </script>
 
@@ -63,10 +53,6 @@ onMounted(() => {
 
         <el-tab-pane label="自然语言查询" name="nlq">
           <NaturalLanguageQuery />
-        </el-tab-pane>
-
-        <el-tab-pane label="预测" name="forecast">
-          <ForecastPanel />
         </el-tab-pane>
       </el-tabs>
     </el-main>

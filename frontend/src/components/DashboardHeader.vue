@@ -1,17 +1,14 @@
 <script setup>
-import { ref } from 'vue'
 import { useDashboardStore } from '../stores/dashboard'
 
 const dashboardStore = useDashboardStore()
 const title = '物流分析仪表板'
 
-// Database data range: 2024-01-01 to 2025-03-31
-const minDate = new Date('2024-01-01')
-const maxDate = new Date('2025-03-31')
+const minDate = new Date('2025-01-01')
+const maxDate = new Date('2025-12-31')
 
-const disabledDate = (time) => {
-  return time.getTime() < minDate.getTime() || time.getTime() > maxDate.getTime()
-}
+const disabledDate = (time) =>
+  time.getTime() < minDate.getTime() || time.getTime() > maxDate.getTime()
 </script>
 
 <template>
@@ -19,36 +16,69 @@ const disabledDate = (time) => {
     <div class="header-content">
       <div class="header-left">
         <h1>{{ title }}</h1>
-        <p class="subtitle">AI驱动的货运运营洞察</p>
+        <p class="subtitle">AI 驱动的货运运营洞察</p>
       </div>
+
       <div class="header-right">
-        <div class="filter-section">
-          <el-date-picker
-            v-model="dashboardStore.dateRange"
-            type="daterange"
-            range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-            size="small"
-            style="margin-right: 10px;"
-            :disabled-date="disabledDate"
-            :default-value="[minDate, new Date('2024-01-31')]"
-          />
-          <el-button @click="dashboardStore.refreshDashboardData" size="small" type="primary" style="margin-right: 10px;">
-            应用筛选
-          </el-button>
-          <el-button @click="dashboardStore.resetFilters" size="small">
-            重置过滤器
-          </el-button>
-        </div>
-        <div class="status-indicator" v-if="dashboardStore.loading">
-          <el-icon class="loading-icon"><Loading /></el-icon>
-          <span>正在加载数据...</span>
-        </div>
-        <div class="error-indicator" v-if="dashboardStore.error">
-          <el-icon class="error-icon"><Warning /></el-icon>
-          <span>错误: {{ dashboardStore.error }}</span>
-        </div>
+        <!-- Date range -->
+        <el-date-picker
+          v-model="dashboardStore.dateRange"
+          type="daterange"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          size="small"
+          :disabled-date="disabledDate"
+          style="width:260px"
+        />
+
+        <!-- Carrier filter -->
+        <el-select
+          v-model="dashboardStore.selectedCarriers"
+          multiple
+          collapse-tags
+          placeholder="承运商"
+          size="small"
+          style="width:160px"
+          clearable
+        >
+          <el-option v-for="c in dashboardStore.availableCarriers" :key="c" :label="c" :value="c" />
+        </el-select>
+
+        <!-- Region filter -->
+        <el-select
+          v-model="dashboardStore.selectedRegions"
+          multiple
+          collapse-tags
+          placeholder="地区"
+          size="small"
+          style="width:130px"
+          clearable
+        >
+          <el-option v-for="r in dashboardStore.availableRegions" :key="r" :label="r" :value="r" />
+        </el-select>
+
+        <!-- Category filter -->
+        <el-select
+          v-model="dashboardStore.selectedCategories"
+          multiple
+          collapse-tags
+          placeholder="品类"
+          size="small"
+          style="width:130px"
+          clearable
+        >
+          <el-option v-for="c in dashboardStore.availableCategories" :key="c" :label="c" :value="c" />
+        </el-select>
+
+        <el-button type="primary" size="small" @click="dashboardStore.refreshDashboardData">
+          应用筛选
+        </el-button>
+        <el-button size="small" @click="dashboardStore.resetFilters">重置</el-button>
+
+        <!-- Status -->
+        <span v-if="dashboardStore.loading" class="status loading">正在加载...</span>
+        <span v-if="dashboardStore.error" class="status error">{{ dashboardStore.error }}</span>
       </div>
     </div>
   </el-header>
@@ -56,82 +86,37 @@ const disabledDate = (time) => {
 
 <style scoped>
 .dashboard-header {
-  background-color: #fff;
+  background: #fff;
   border-bottom: 1px solid #e4e7ed;
   padding: 0 20px;
   height: auto;
-  min-height: 80px;
+  min-height: 72px;
   display: flex;
   align-items: center;
 }
-
 .header-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
   flex-wrap: wrap;
-  gap: 15px;
+  gap: 12px;
+  padding: 10px 0;
 }
-
-.header-left h1 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.subtitle {
-  margin: 5px 0 0 0;
-  font-size: 14px;
-  color: #909399;
-}
-
+.header-left h1 { margin: 0; font-size: 22px; font-weight: 600; color: #303133; }
+.subtitle { margin: 4px 0 0; font-size: 13px; color: #909399; }
 .header-right {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 8px;
   flex-wrap: wrap;
 }
+.status { font-size: 12px; padding: 4px 8px; border-radius: 4px; }
+.status.loading { color: #409eff; background: #ecf5ff; }
+.status.error   { color: #f56c6c; background: #fef0f0; }
 
-.filter-section {
-  display: flex;
-  align-items: center;
-}
-
-.status-indicator,
-.error-indicator {
-  display: flex;
-  align-items: center;
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.status-indicator {
-  color: #409eff;
-  background-color: #ecf5ff;
-}
-
-.error-indicator {
-  color: #f56c6c;
-  background-color: #fef0f0;
-}
-
-.loading-icon,
-.error-icon {
-  margin-right: 5px;
-}
-
-@media (max-width: 768px) {
-  .header-content {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .header-right {
-    width: 100%;
-    justify-content: space-between;
-  }
+@media (max-width: 900px) {
+  .header-content { flex-direction: column; align-items: flex-start; }
+  .header-right { width: 100%; }
 }
 </style>

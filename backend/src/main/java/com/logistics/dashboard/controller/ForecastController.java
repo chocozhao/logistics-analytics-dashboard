@@ -40,7 +40,8 @@ public class ForecastController {
                 startDate,
                 endDate,
                 request.getCarriers(),
-                request.getRegions()
+                request.getRegions(),
+                request.getCategories()
         );
 
         return ResponseEntity.ok(response);
@@ -64,7 +65,8 @@ public class ForecastController {
                 finalStartDate,
                 finalEndDate,
                 carriers,
-                regions
+                regions,
+                null
         );
 
         return ResponseEntity.ok(response);

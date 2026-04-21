@@ -3,7 +3,7 @@ package com.logistics.dashboard.service;
 import com.logistics.dashboard.dto.ForecastData;
 import com.logistics.dashboard.dto.ForecastResponse;
 import com.logistics.dashboard.dto.TimeSeriesData;
-import com.logistics.dashboard.dto.TimeSeriesResponse;
+import com.logistics.dashboard.repository.OrderRepository;
 import org.apache.commons.math3.stat.regression.SimpleRegression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,284 +14,251 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
+/**
+ * Deterministic forecasting service.
+ * Uses Holt's Double Exponential Smoothing (DES) which captures both level and trend.
+ * Falls back to Simple Exponential Smoothing (SES) or Linear Regression as needed.
+ * AI never generates forecast values — this service always computes from real data.
+ */
 @Service
 public class ForecastingService {
 
     private static final Logger log = LoggerFactory.getLogger(ForecastingService.class);
-    private final DashboardService dashboardService;
+    private final OrderRepository orderRepository;
 
-    public ForecastingService(DashboardService dashboardService) {
-        this.dashboardService = dashboardService;
+    public ForecastingService(OrderRepository orderRepository) {
+        this.orderRepository = orderRepository;
     }
 
-    /**
-     * Forecast future order volume using exponential smoothing
-     */
     public ForecastResponse forecastDemand(String granularity, int periods,
                                            LocalDate startDate, LocalDate endDate,
                                            List<String> carriers, List<String> regions) {
-        log.info("预测需求：粒度 {}，周期数 {}，时间范围 {} 到 {}",
-                granularity, periods, startDate, endDate);
+        return forecastDemand(granularity, periods, startDate, endDate, carriers, regions, null);
+    }
+
+    public ForecastResponse forecastDemand(String granularity, int periods,
+                                           LocalDate startDate, LocalDate endDate,
+                                           List<String> carriers, List<String> regions,
+                                           List<String> categories) {
+        log.info("Forecasting: granularity={} periods={} {} to {}", granularity, periods, startDate, endDate);
 
         try {
-            // Get historical data
-            TimeSeriesResponse historicalData = dashboardService.getOrderVolumeTimeSeries(
-                    granularity, startDate, endDate, carriers, regions);
+            String[] c   = toArray(carriers);
+            String[] r   = toArray(regions);
+            String[] cat = toArray(categories);
 
-            if (historicalData.getData().isEmpty()) {
-                return createEmptyForecast(granularity, periods,
-                        "无历史数据可用于预测");
+            List<Object[]> rows = orderRepository.getHistoricalOrderCountByPeriod(
+                    granularity, startDate, endDate, c, r, cat);
+
+            if (rows.isEmpty()) {
+                return createEmptyForecast(granularity, periods, "无历史数据可用于预测");
             }
 
-            // Convert to double array for analysis
-            double[] values = historicalData.getData().stream()
-                    .mapToDouble(d -> d.getCount().doubleValue())
-                    .toArray();
-
-            // Try exponential smoothing first
-            ForecastResult expResult = tryExponentialSmoothing(values, periods);
-
-            List<ForecastData> forecastData = new ArrayList<>();
-
-            // Add historical data (not forecast)
-            for (int i = 0; i < historicalData.getData().size(); i++) {
-                TimeSeriesData tsData = historicalData.getData().get(i);
-                forecastData.add(new ForecastData(tsData.getDate(), tsData.getCount(), false));
+            // Parse historical time series
+            List<LocalDate> dates  = new ArrayList<>();
+            double[]        values = new double[rows.size()];
+            for (int i = 0; i < rows.size(); i++) {
+                dates.add(toLocalDate(rows.get(i)[0]));
+                values[i] = ((Number) rows.get(i)[1]).doubleValue();
             }
 
-            // Add forecast data
-            LocalDate lastDate = historicalData.getData().get(historicalData.getData().size() - 1).getDate();
-            for (int i = 0; i < expResult.forecasts.length; i++) {
-                LocalDate forecastDate = incrementDateByGranularity(lastDate, granularity, i + 1);
-                forecastData.add(new ForecastData(forecastDate, Math.round(expResult.forecasts[i]), true));
+            // Select algorithm
+            ForecastResult result;
+            if (values.length >= 4) {
+                result = holtsDoubleExponentialSmoothing(values, periods);
+            } else if (values.length >= 2) {
+                result = sesWithBestAlpha(values, periods);
+            } else {
+                result = linearRegression(values, periods);
             }
 
-            // Generate recommendations
-            String recommendations = generateRecommendations(expResult.forecasts, expResult.algorithm);
+            // Build response data list
+            List<ForecastData> data = new ArrayList<>();
+            for (int i = 0; i < dates.size(); i++) {
+                data.add(new ForecastData(dates.get(i), Math.round(values[i]), false));
+            }
+            LocalDate lastDate = dates.get(dates.size() - 1);
+            for (int i = 0; i < result.forecasts.length; i++) {
+                double raw = result.forecasts[i];
+                long   val = Math.max(0, Math.round(raw));
+                data.add(new ForecastData(incrementDate(lastDate, granularity, i + 1), val, true));
+            }
 
             return new ForecastResponse(
                     granularity,
                     periods,
-                    expResult.algorithm,
-                    new BigDecimal("1.20"), // Safety stock multiplier
-                    forecastData,
-                    recommendations
+                    result.algorithm,
+                    new BigDecimal("1.20"),
+                    data,
+                    buildRecommendations(values, result.forecasts, result.algorithm)
             );
 
         } catch (Exception e) {
-            log.error("预测出错: {}", e.getMessage(), e);
-            return createErrorForecast(granularity, periods,
-                    "预测失败: " + e.getMessage());
+            log.error("Forecast error: {}", e.getMessage(), e);
+            return createEmptyForecast(granularity, periods, "预测失败: " + e.getMessage());
         }
     }
 
-    /**
-     * Try exponential smoothing, fall back to linear regression if it fails
-     */
-    private ForecastResult tryExponentialSmoothing(double[] values, int periods) {
-        // Simple Exponential Smoothing (SES) implementation
-        // We'll use a grid search to find best alpha
+    // ── Holt's Double Exponential Smoothing (level + trend) ──────────────────
 
-        if (values.length < 3) {
-            log.warn("指数平滑数据不足 (n={})，使用线性回归", values.length);
-            return tryLinearRegression(values, periods);
-        }
-
-        double bestAlpha = 0.3; // default
+    private ForecastResult holtsDoubleExponentialSmoothing(double[] values, int periods) {
+        double bestAlpha = 0.3, bestBeta = 0.1;
         double bestMSE = Double.MAX_VALUE;
 
-        // Grid search for alpha (0.1 to 0.9, step 0.1)
         for (double alpha = 0.1; alpha <= 0.9; alpha += 0.1) {
-            try {
-                double mse = calculateMSE(values, alpha);
+            for (double beta = 0.1; beta <= 0.5; beta += 0.1) {
+                double mse = holtsInSampleMSE(values, alpha, beta);
                 if (mse < bestMSE) {
                     bestMSE = mse;
                     bestAlpha = alpha;
+                    bestBeta  = beta;
                 }
-            } catch (Exception e) {
-                log.debug("Alpha {} failed: {}", alpha, e.getMessage());
             }
         }
 
-        log.info("选择的alpha={}，MSE={}", bestAlpha, bestMSE);
-
-        // Generate forecasts using best alpha
-        double[] forecasts = generateSESForecasts(values, bestAlpha, periods);
-
-        return new ForecastResult(forecasts, "指数平滑法 (alpha=" +
-                String.format("%.2f", bestAlpha) + ")");
+        double[] forecasts = holtsForecasts(values, bestAlpha, bestBeta, periods);
+        String algo = String.format("Holt双指数平滑法 (α=%.1f, β=%.1f)", bestAlpha, bestBeta);
+        return new ForecastResult(forecasts, algo);
     }
 
-    /**
-     * Calculate Mean Squared Error for given alpha
-     * Uses last 20% of data for validation
-     */
-    private double calculateMSE(double[] values, double alpha) {
-        int validationSize = Math.max(1, (int) (values.length * 0.2));
-        int trainingSize = values.length - validationSize;
+    private double holtsInSampleMSE(double[] values, double alpha, double beta) {
+        int n = values.length;
+        int trainN = Math.max(2, n - Math.max(1, n / 5));
+        double[] train = new double[trainN];
+        System.arraycopy(values, 0, train, 0, trainN);
 
-        if (trainingSize < 2) {
-            return Double.MAX_VALUE; // Not enough training data
+        double[] forecasts = holtsForecasts(train, alpha, beta, n - trainN);
+        double sse = 0;
+        for (int i = 0; i < forecasts.length; i++) {
+            double e = values[trainN + i] - forecasts[i];
+            sse += e * e;
         }
-
-        double[] training = new double[trainingSize];
-        System.arraycopy(values, 0, training, 0, trainingSize);
-
-        // Generate one-step-ahead forecasts for training data
-        double[] forecasts = generateSESForecasts(training, alpha, validationSize);
-
-        // Calculate MSE on validation set
-        double sumSquaredError = 0;
-        for (int i = 0; i < validationSize; i++) {
-            double error = values[trainingSize + i] - forecasts[i];
-            sumSquaredError += error * error;
-        }
-
-        return sumSquaredError / validationSize;
+        return sse / forecasts.length;
     }
 
-    /**
-     * Generate forecasts using Simple Exponential Smoothing
-     */
-    private double[] generateSESForecasts(double[] values, double alpha, int periods) {
-        // SES formula: F_t+1 = alpha * Y_t + (1 - alpha) * F_t
+    private double[] holtsForecasts(double[] values, double alpha, double beta, int periods) {
+        // Initialize level and trend
+        double level = values[0];
+        double trend = (values.length >= 2) ? values[1] - values[0] : 0;
+
+        // Smooth over history
+        for (int t = 1; t < values.length; t++) {
+            double prevLevel = level;
+            level = alpha * values[t] + (1 - alpha) * (level + trend);
+            trend = beta * (level - prevLevel) + (1 - beta) * trend;
+        }
+
+        // Project forward
         double[] forecasts = new double[periods];
-
-        if (values.length == 0) {
-            return forecasts;
+        for (int h = 1; h <= periods; h++) {
+            forecasts[h - 1] = level + h * trend;
         }
-
-        // Initialize with first value
-        double forecast = values[0];
-
-        // Calculate smoothed values for historical data
-        for (double value : values) {
-            forecast = alpha * value + (1 - alpha) * forecast;
-        }
-
-        // Generate forecasts
-        for (int i = 0; i < periods; i++) {
-            forecasts[i] = forecast;
-            // For SES, forecast remains constant for all future periods
-        }
-
         return forecasts;
     }
 
-    /**
-     * Fallback method: linear regression
-     */
-    private ForecastResult tryLinearRegression(double[] values, int periods) {
-        SimpleRegression regression = new SimpleRegression();
+    // ── Simple Exponential Smoothing fallback ─────────────────────────────────
 
-        for (int i = 0; i < values.length; i++) {
-            regression.addData(i, values[i]);
+    private ForecastResult sesWithBestAlpha(double[] values, int periods) {
+        double bestAlpha = 0.3, bestMSE = Double.MAX_VALUE;
+        for (double alpha = 0.1; alpha <= 0.9; alpha += 0.1) {
+            double mse = sesMSE(values, alpha);
+            if (mse < bestMSE) { bestMSE = mse; bestAlpha = alpha; }
         }
+        double[] forecasts = sesForecasts(values, bestAlpha, periods);
+        return new ForecastResult(forecasts, String.format("指数平滑法 (α=%.1f)", bestAlpha));
+    }
 
+    private double sesMSE(double[] values, double alpha) {
+        int n = values.length;
+        int trainN = Math.max(1, n - 1);
+        double f = values[0];
+        for (int t = 1; t < trainN; t++) {
+            f = alpha * values[t] + (1 - alpha) * f;
+        }
+        double e = values[n - 1] - f;
+        return e * e;
+    }
+
+    private double[] sesForecasts(double[] values, double alpha, int periods) {
+        double f = values[0];
+        for (double v : values) {
+            f = alpha * v + (1 - alpha) * f;
+        }
+        double[] out = new double[periods];
+        for (int i = 0; i < periods; i++) out[i] = f;
+        return out;
+    }
+
+    // ── Linear regression fallback ────────────────────────────────────────────
+
+    private ForecastResult linearRegression(double[] values, int periods) {
+        SimpleRegression reg = new SimpleRegression();
+        for (int i = 0; i < values.length; i++) reg.addData(i, values[i]);
         double[] forecasts = new double[periods];
         for (int i = 0; i < periods; i++) {
-            forecasts[i] = regression.predict(values.length + i);
+            forecasts[i] = reg.predict(values.length + i);
         }
-
         return new ForecastResult(forecasts, "线性回归");
     }
 
-    /**
-     * Increment date based on granularity
-     */
-    private LocalDate incrementDateByGranularity(LocalDate date, String granularity, int steps) {
-        switch (granularity.toLowerCase()) {
-            case "day":
-                return date.plusDays(steps);
-            case "week":
-                return date.plusWeeks(steps);
-            case "month":
-                return date.plusMonths(steps);
-            default:
-                return date.plusDays(steps);
-        }
-    }
+    // ── Recommendations text ──────────────────────────────────────────────────
 
-    /**
-     * Generate inventory recommendations based on forecasts
-     */
-    private String generateRecommendations(double[] forecasts, String algorithm) {
-        if (forecasts.length == 0) {
-            return "未生成预测。";
-        }
-
-        double avgForecast = 0;
+    private String buildRecommendations(double[] history, double[] forecasts, String algorithm) {
+        double avgForecast = 0, minF = Double.MAX_VALUE, maxF = -Double.MAX_VALUE;
         for (double f : forecasts) {
             avgForecast += f;
+            if (f < minF) minF = f;
+            if (f > maxF) maxF = f;
         }
         avgForecast /= forecasts.length;
 
-        double safetyStock = avgForecast * 1.2;
-        double minForecast = Double.MAX_VALUE;
-        double maxForecast = Double.MIN_VALUE;
+        // Trend compared to recent history
+        double recentAvg = 0;
+        int window = Math.min(forecasts.length, history.length);
+        for (int i = history.length - window; i < history.length; i++) recentAvg += history[i];
+        recentAvg /= window;
 
-        for (double f : forecasts) {
-            if (f < minForecast) minForecast = f;
-            if (f > maxForecast) maxForecast = f;
-        }
+        double trendPct = recentAvg > 0 ? ((avgForecast - recentAvg) / recentAvg) * 100 : 0;
+        String trendDesc = trendPct > 2 ? "↑ 上升趋势" : trendPct < -2 ? "↓ 下降趋势" : "→ 平稳";
 
         return String.format(
-                "基于%s预测：\n" +
-                "- 平均预期需求：%.0f 订单\n" +
-                "- 建议安全库存：%.0f 订单 (20%% 缓冲)\n" +
-                "- 预测范围：%.0f 到 %.0f 订单\n" +
-                "- 请相应调整库存水平。",
-                algorithm, avgForecast, safetyStock, minForecast, maxForecast
+                "基于 %s：\n" +
+                "- 趋势判断：%s (%.1f%%)\n" +
+                "- 预测均值：%.0f 单/期\n" +
+                "- 预测区间：%.0f ~ %.0f 单\n" +
+                "- 建议备货量（安全库存20%%缓冲）：%.0f 单/期",
+                algorithm, trendDesc, trendPct, avgForecast, minF, maxF, avgForecast * 1.2
         );
     }
 
-    /**
-     * Create empty forecast response
-     */
-    private ForecastResponse createEmptyForecast(String granularity, int periods, String message) {
-        return new ForecastResponse(
-                granularity,
-                periods,
-                "None",
-                BigDecimal.ZERO,
-                new ArrayList<>(),
-                message
-        );
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private String[] toArray(List<String> list) {
+        return (list == null || list.isEmpty()) ? null : list.toArray(new String[0]);
     }
 
-    /**
-     * Create error forecast response
-     */
-    private ForecastResponse createErrorForecast(String granularity, int periods, String message) {
-        return new ForecastResponse(
-                granularity,
-                periods,
-                "Error",
-                BigDecimal.ZERO,
-                new ArrayList<>(),
-                message
-        );
+    private LocalDate toLocalDate(Object obj) {
+        if (obj instanceof java.sql.Date)      return ((java.sql.Date) obj).toLocalDate();
+        if (obj instanceof java.sql.Timestamp) return ((java.sql.Timestamp) obj).toLocalDateTime().toLocalDate();
+        return LocalDate.parse(obj.toString());
     }
 
-    /**
-     * Calculate safety stock recommendation (forecast * 1.2)
-     */
-    public BigDecimal calculateSafetyStockRecommendation(BigDecimal forecastValue) {
-        if (forecastValue == null || forecastValue.compareTo(BigDecimal.ZERO) == 0) {
-            return BigDecimal.ZERO;
-        }
-        return forecastValue.multiply(new BigDecimal("1.20"));
+    private LocalDate incrementDate(LocalDate date, String granularity, int steps) {
+        return switch (granularity.toLowerCase()) {
+            case "week"  -> date.plusWeeks(steps);
+            case "month" -> date.plusMonths(steps);
+            default      -> date.plusDays(steps);
+        };
     }
 
-    /**
-     * Helper class to store forecast results
-     */
+    private ForecastResponse createEmptyForecast(String granularity, int periods, String msg) {
+        return new ForecastResponse(granularity, periods, "N/A", BigDecimal.ZERO, new ArrayList<>(), msg);
+    }
+
     private static class ForecastResult {
         double[] forecasts;
-        String algorithm;
-
+        String   algorithm;
         ForecastResult(double[] forecasts, String algorithm) {
             this.forecasts = forecasts;
             this.algorithm = algorithm;

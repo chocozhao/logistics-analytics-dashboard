@@ -20,6 +20,7 @@ public class ForecastRequest {
 
     private List<String> carriers;
     private List<String> regions;
+    private List<String> categories;
 
     public ForecastRequest() {
     }
@@ -70,5 +71,13 @@ public class ForecastRequest {
 
     public void setRegions(List<String> regions) {
         this.regions = regions;
+    }
+
+    public List<String> getCategories() {
+        return categories;
+    }
+
+    public void setCategories(List<String> categories) {
+        this.categories = categories;
     }
 }

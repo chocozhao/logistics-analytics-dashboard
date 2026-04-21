@@ -1,580 +1,543 @@
 package com.logistics.dashboard.ai.orchestrator;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.logistics.dashboard.ai.model.QueryRequest;
 import com.logistics.dashboard.ai.model.QueryResponse;
-import com.logistics.dashboard.ai.tools.AiTools;
 import com.logistics.dashboard.dto.*;
-import dev.langchain4j.memory.ChatMemory;
-import dev.langchain4j.memory.chat.MessageWindowChatMemory;
+import com.logistics.dashboard.service.DashboardService;
+import com.logistics.dashboard.service.ForecastingService;
 import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.service.AiServices;
-import dev.langchain4j.service.UserMessage;
+import dev.langchain4j.model.input.Prompt;
+import dev.langchain4j.model.input.PromptTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
+import java.time.Year;
 import java.util.*;
-import java.util.concurrent.ThreadLocalRandom;
-import java.math.BigDecimal;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
+/**
+ * NLU Orchestrator: AI interprets the question and outputs a structured tool-call plan.
+ * Java services execute all computations deterministically — AI never generates data values.
+ *
+ * Flow: user question → AI → JSON plan → Java service → real data → response
+ */
 @Service
 public class NLUOrchestrator {
 
-    // Keywords for data-related questions
-    private static final Set<String> DATA_KEYWORDS = Set.of(
-        "订单", "order", "订购", "购买", "销量",
-        "交付", "delivery", "交货", "运输", "送达",
-        "承运商", "carrier", "快递", "物流公司", "运输商",
-        "趋势", "trend", "变化", "增长", "下降",
-        "性能", "performance", "效率", "准时", "延迟",
-        "地区", "region", "区域", "城市", "地点",
-        "预测", "forecast", "预计", "未来", "kpi",
-        "指标", "metric", "统计", "数字", "数量"
-    );
+    private static final Logger log = LoggerFactory.getLogger(NLUOrchestrator.class);
 
-    // Keywords for unrelated system questions (should not show visualizations)
-    private static final Set<String> UNRELATED_KEYWORDS = Set.of(
-        "你是谁", "你是什么", "你叫什么", "你从哪来",
-        "你好", "hello", "hi", "你好吗", "how are you",
-        "帮助", "help", "说明", "解释", "教程",
-        "天气", "time", "日期", "今天星期几", "现在几点",
-        "who are you", "what are you", "what is your name", "where are you from",
-        "thanks", "thank you", "bye", "goodbye", "see you"
-    );
+    // Valid enum values for validation
+    private static final Set<String> VALID_CARRIERS  = Set.of(
+            "UPS","FedEx","DHL","USPS","LaserShip","OnTrac","DPD","GLS","Royal Mail");
+    private static final Set<String> VALID_REGIONS   = Set.of("US-W","US-C","US-E","EU","UK");
+    private static final Set<String> VALID_CATEGORIES = Set.of(
+            "BOOK","PAPER","PENCIL","CRAYON","MARKER","BRUSH","PAINT","STICKER");
+    private static final Set<String> VALID_TOOLS     = Set.of(
+            "getKpi","getTimeSeries","getBreakdown","getDeliveryPerformance","forecastDemand");
+    private static final Set<String> VALID_GRAN      = Set.of("day","week","month");
+
+    private static final LocalDate DATA_START = LocalDate.of(2025, 1, 1);
+    private static final LocalDate DATA_END   = LocalDate.of(2025, 12, 31);
 
     private ChatLanguageModel model;
-    private AiAssistant assistant;
-    private final AiTools aiTools;
+    private final DashboardService     dashboardService;
+    private final ForecastingService   forecastingService;
+    private final ObjectMapper         mapper = new ObjectMapper();
+
+    // ── Prompt template ──────────────────────────────────────────────────────
+    private static final String SYSTEM_PROMPT = """
+You are a logistics analytics assistant. Your job is to interpret the user's question about freight/order data and output a SINGLE JSON object describing which analysis tool to call.
+
+DATABASE SCHEMA (table: orders):
+- order_date DATE, delivery_date DATE (NULL if not yet delivered)
+- status: 'delivered' | 'delayed' | 'in_transit' | 'exception' | 'canceled'
+  NOTE: 'delayed' is a status value, not computed from dates.
+- carrier: UPS, FedEx, DHL, USPS, LaserShip, OnTrac, DPD, GLS, Royal Mail
+- region: US-W, US-C, US-E, EU, UK
+- product_category: BOOK, PAPER, PENCIL, CRAYON, MARKER, BRUSH, PAINT, STICKER
+- origin_city, destination_city, warehouse, sku
+- order_value_usd, unit_price_usd, quantity, is_promo, promo_discount_pct
+
+DATA DATE RANGE: 2025-01-01 to 2025-12-31
+
+TOOLS:
+1. getKpi       - Returns: totalOrders, deliveredOrders, delayedOrders, onTimeRate, avgDeliveryDays
+2. getTimeSeries - Returns: time-bucketed order counts. Params: granularity (day/week/month)
+3. getBreakdown  - Returns: carrier breakdown (total_orders, delayed_orders, delay_rate). Params: dimension=carrier
+4. getDeliveryPerformance - Returns: on-time vs delayed counts per time period. Params: granularity
+5. forecastDemand - Returns: historical + forecasted order counts. Params: periods (int), granularity
+
+PARAMETER EXTRACTION RULES:
+- Extract year/month/quarter from question → convert to startDate/endDate (YYYY-MM-DD)
+- "2025" → startDate=2025-01-01, endDate=2025-12-31
+- "Q1 2025" → startDate=2025-01-01, endDate=2025-03-31
+- "January 2025" → startDate=2025-01-01, endDate=2025-01-31
+- If no date mentioned → use full data range 2025-01-01 to 2025-12-31
+- Extract carrier names from question if mentioned
+- Extract region names (US-W, US-C, US-E, EU, UK) from question if mentioned
+- Extract product categories if mentioned
+
+OUTPUT FORMAT (strict JSON, no markdown):
+{
+  "tool": "<tool_name>",
+  "params": {
+    "startDate": "YYYY-MM-DD",
+    "endDate": "YYYY-MM-DD",
+    "granularity": "month",
+    "carriers": ["UPS"],
+    "regions": [],
+    "categories": [],
+    "periods": 4
+  },
+  "answerTemplate": "<one-sentence description of what the answer will show>"
+}
+
+EXAMPLES:
+Q: "2025年有多少UPS的订单延误了？"
+A: {"tool":"getKpi","params":{"startDate":"2025-01-01","endDate":"2025-12-31","carriers":["UPS"],"regions":[],"categories":[]},"answerTemplate":"2025年UPS延误订单总数"}
+
+Q: "Show me monthly order volume trend"
+A: {"tool":"getTimeSeries","params":{"startDate":"2025-01-01","endDate":"2025-12-31","granularity":"month","carriers":[],"regions":[],"categories":[]},"answerTemplate":"月度订单量趋势"}
+
+Q: "Which carrier has the highest delay rate?"
+A: {"tool":"getBreakdown","params":{"startDate":"2025-01-01","endDate":"2025-12-31","dimension":"carrier","carriers":[],"regions":[],"categories":[]},"answerTemplate":"各承运商延误率对比"}
+
+Q: "Forecast next 4 weeks of orders"
+A: {"tool":"forecastDemand","params":{"startDate":"2025-01-01","endDate":"2025-12-31","granularity":"week","periods":4,"carriers":[],"regions":[],"categories":[]},"answerTemplate":"未来4周订单量预测"}
+
+Output ONLY the JSON object, nothing else.
+""";
 
     public NLUOrchestrator(
             @Value("${openai.api.key:}") String apiKey,
-            AiTools aiTools) {
+            DashboardService dashboardService,
+            ForecastingService forecastingService) {
 
-        this.aiTools = aiTools;
+        this.dashboardService   = dashboardService;
+        this.forecastingService = forecastingService;
 
-        // Check if API key is provided
-        if (apiKey == null || apiKey.trim().isEmpty()) {
-            System.out.println("WARNING: OPENAI_API_KEY not provided. Natural Language Query functionality will be limited.");
-            System.out.println("DEBUG: API key is null or empty");
-            // Create a mock model that returns placeholder responses
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("OPENAI_API_KEY not set — NLQ will use keyword-based fallback");
             this.model = null;
-            this.assistant = null;
         } else {
             try {
-                System.out.println("DEBUG: Attempting to initialize AI model with provided API key");
-                System.out.println("DEBUG: API key length: " + apiKey.length());
-                System.out.println("DEBUG: API key prefix: " + (apiKey.length() > 8 ? apiKey.substring(0, 8) + "..." : apiKey));
-
-                // Create chat model with DeepSeek (OpenAI-compatible API)
                 this.model = dev.langchain4j.model.openai.OpenAiChatModel.builder()
                         .apiKey(apiKey)
                         .baseUrl("https://api.deepseek.com")
                         .modelName("deepseek-chat")
-                        .temperature(0.1)
-                        .maxTokens(500)
+                        .temperature(0.0)
+                        .maxTokens(300)
                         .build();
-
-                // Create chat memory
-                ChatMemory chatMemory = MessageWindowChatMemory.withMaxMessages(10);
-
-                // Create AI assistant with tool support
-                this.assistant = AiServices.builder(AiAssistant.class)
-                        .chatLanguageModel(model)
-                        .chatMemory(chatMemory)
-                        .tools(aiTools)
-                        .build();
-
-                System.out.println("AI model initialized successfully with DeepSeek API");
+                log.info("AI model initialized (DeepSeek)");
             } catch (Exception e) {
-                System.out.println("WARNING: Failed to initialize AI model. Natural Language Query functionality will be limited.");
-                System.out.println("DEBUG: Error details: " + e.getClass().getName() + ": " + e.getMessage());
-                e.printStackTrace();
+                log.warn("Failed to initialize AI model: {}", e.getMessage());
                 this.model = null;
-                this.assistant = null;
             }
         }
     }
 
-    /**
-     * Process a natural language query and return structured response
-     */
+    // ── Main entry point ─────────────────────────────────────────────────────
+
     public QueryResponse processQuery(QueryRequest request) {
-        System.out.println("DEBUG processQuery: starting with question: " + request.getQuestion());
-        System.out.println("DEBUG processQuery: model is " + (model == null ? "null" : "available"));
-        System.out.println("DEBUG processQuery: assistant is " + (assistant == null ? "null" : "available"));
+        String question = request.getQuestion();
+        log.info("Processing query: {}", question);
+
         try {
-            // Check if AI model is available
-            if (model == null || assistant == null) {
-                System.out.println("DEBUG processQuery: AI model not available, using mock data path");
-                QueryResponse placeholderResponse = new QueryResponse();
-                placeholderResponse.setAnswer("自然语言查询功能需要配置AI API密钥。请设置OPENAI_API_KEY环境变量。");
-                placeholderResponse.setExplanation("此功能使用DeepSeek的AI模型来解释关于物流数据的自然语言问题。");
-                placeholderResponse.setChartType("none");
+            // 1. Get tool plan (from AI or fallback)
+            ToolPlan plan = resolvePlan(question, request);
+            log.info("Resolved plan: tool={} params={}", plan.tool, plan.params);
 
-                // You can still use other dashboard features without OpenAI
-                if (request.getQuestion() != null && !request.getQuestion().isEmpty()) {
-                    String question = request.getQuestion().toLowerCase();
-                    if (question.contains("order") || question.contains("delivery") || question.contains("carrier")) {
-                        placeholderResponse.setAnswer("自然语言查询当前不可用。请使用仪表板的标准分析功能查看订单、交货和承运商数据。");
-                    }
-                }
-
-                // Add mock data for visualization and raw data when AI is not available
-                populateResponseWithMockData(placeholderResponse, request, request.getQuestion());
-                return placeholderResponse;
-            }
-
-            // Prepare system message with context
-            String systemPrompt = createSystemPrompt(request);
-
-            // Get response from AI assistant - combine system prompt and user question
-            String fullMessage = "System: " + systemPrompt + "\n\nUser: " + request.getQuestion();
-            String aiResponse = assistant.chat(fullMessage);
-
-            // For now, return a simple response
-            // In a full implementation, we would parse the AI's tool calls and execute them
-            QueryResponse response = new QueryResponse();
-            response.setAnswer(aiResponse);
-            response.setExplanation("AI已解读您的问题并选择了合适的分析工具。");
-            response.setChartType("none");
-
-            // Add filters if provided
-            if (request.getStartDate() != null || request.getEndDate() != null ||
-                request.getCarriers() != null || request.getRegions() != null) {
-                Map<String, Object> filters = new HashMap<>();
-                if (request.getStartDate() != null) filters.put("startDate", request.getStartDate());
-                if (request.getEndDate() != null) filters.put("endDate", request.getEndDate());
-                if (request.getCarriers() != null) filters.put("carriers", request.getCarriers());
-                if (request.getRegions() != null) filters.put("regions", request.getRegions());
-                response.setFilters(filters);
-            }
-
-            // Always add mock data for visualization and raw data for demo purposes
-            // This ensures frontend has data to display even when AI only returns text
-            populateResponseWithMockData(response, request, request.getQuestion());
-
-            return response;
+            // 2. Execute plan against real data
+            return executePlan(plan, question);
 
         } catch (Exception e) {
-            // If AI fails, return a helpful message instead of error
-            QueryResponse response = new QueryResponse();
-            response.setAnswer("自然语言查询功能当前不可用。请使用仪表板的标准分析功能查看订单、交货和承运商数据。");
-            response.setExplanation("AI服务暂时不可用，但您仍然可以使用筛选器查看数据。");
-            response.setChartType("none");
-            response.setError(null); // Explicitly set error to null
-            System.out.println("AI query failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-
-            // Add mock data for visualization and raw data
-            populateResponseWithMockData(response, request, request.getQuestion());
-            return response;
+            log.error("Query processing error: {}", e.getMessage(), e);
+            QueryResponse err = new QueryResponse();
+            err.setAnswer("查询处理时发生错误，请稍后重试。");
+            err.setChartType("none");
+            err.setError(e.getMessage());
+            return err;
         }
     }
 
-    /**
-     * Create system prompt with context about available tools and data
-     */
-    private String createSystemPrompt(QueryRequest request) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("You are an AI assistant for a logistics analytics dashboard. ");
-        prompt.append("Your role is to interpret user questions about logistics data and select appropriate analytical tools. ");
-        prompt.append("\n\n");
-        prompt.append("Available data includes: orders, delivery performance, carrier performance, and time series trends. ");
-        prompt.append("All data is read-only from a PostgreSQL database. ");
-        prompt.append("\n\n");
-        prompt.append("You have access to these tools:\n");
-        prompt.append("1. getTimeSeries - Get aggregated values over time (day, week, month)\n");
-        prompt.append("2. getBreakdown - Get aggregated values by categorical dimension (carrier, region)\n");
-        prompt.append("3. getKpi - Get key performance indicators (total orders, delivered, delayed, on-time rate, avg delivery days)\n");
-        prompt.append("4. getDeliveryPerformance - Get delivery performance data (on-time vs delayed)\n");
-        prompt.append("5. forecastDemand - Forecast future order volume (placeholder for now)\n");
-        prompt.append("\n");
-        prompt.append("IMPORTANT RULES:\n");
-        prompt.append("- NEVER make up or guess data values. Always use the tools.\n");
-        prompt.append("- If a user asks about specific dates, use the date range provided.\n");
-        prompt.append("- If no date range is specified, suggest using a reasonable default (e.g., last 30 days).\n");
-        prompt.append("- Always explain what tools you would use and why.\n");
-        prompt.append("\n");
+    // ── Plan resolution ──────────────────────────────────────────────────────
 
-        // Add context about filters if provided
-        if (request.getStartDate() != null || request.getEndDate() != null) {
-            prompt.append("Context: User has specified date range: ");
-            if (request.getStartDate() != null) prompt.append("from ").append(request.getStartDate());
-            if (request.getEndDate() != null) prompt.append(" to ").append(request.getEndDate());
-            prompt.append("\n");
+    private ToolPlan resolvePlan(String question, QueryRequest request) {
+        ToolPlan plan = null;
+
+        // Try AI first
+        if (model != null) {
+            plan = askAiForPlan(question);
         }
 
+        // Fallback: keyword-based heuristic
+        if (plan == null) {
+            plan = heuristicPlan(question, request);
+        }
+
+        // Merge any explicit frontend filters (they take priority over AI-extracted)
         if (request.getCarriers() != null && !request.getCarriers().isEmpty()) {
-            prompt.append("Context: User filtered by carriers: ").append(String.join(", ", request.getCarriers())).append("\n");
+            plan.params.put("carriers", request.getCarriers());
         }
-
         if (request.getRegions() != null && !request.getRegions().isEmpty()) {
-            prompt.append("Context: User filtered by regions: ").append(String.join(", ", request.getRegions())).append("\n");
+            plan.params.put("regions", request.getRegions());
+        }
+        if (request.getCategories() != null && !request.getCategories().isEmpty()) {
+            plan.params.put("categories", request.getCategories());
+        }
+        if (request.getStartDate() != null) {
+            plan.params.put("startDate", request.getStartDate().toString());
+        }
+        if (request.getEndDate() != null) {
+            plan.params.put("endDate", request.getEndDate().toString());
         }
 
-        prompt.append("\n");
-        prompt.append("Your response should be a clear, concise answer to the user's question, ");
-        prompt.append("mentioning which tools would be used and what the results would show.");
-
-        return prompt.toString();
+        return plan;
     }
 
-    /**
-     * AI Assistant interface for LangChain4j
-     */
-    interface AiAssistant {
+    private ToolPlan askAiForPlan(String question) {
+        try {
+            String prompt = SYSTEM_PROMPT + "\n\nUser question: " + question;
+            String response = model.generate(prompt);
+            log.debug("AI raw response: {}", response);
 
-        String chat(@UserMessage String message);
+            // Strip markdown code fences if present
+            String json = response.trim()
+                    .replaceAll("^```json\\s*", "")
+                    .replaceAll("^```\\s*", "")
+                    .replaceAll("\\s*```$", "")
+                    .trim();
+
+            JsonNode root = mapper.readTree(json);
+            ToolPlan plan = new ToolPlan();
+            plan.tool = root.path("tool").asText();
+            plan.answerTemplate = root.path("answerTemplate").asText();
+
+            if (!VALID_TOOLS.contains(plan.tool)) {
+                log.warn("AI returned invalid tool: {}", plan.tool);
+                return null;
+            }
+
+            JsonNode p = root.path("params");
+            plan.params = new HashMap<>();
+            if (p.has("startDate"))   plan.params.put("startDate", p.get("startDate").asText());
+            if (p.has("endDate"))     plan.params.put("endDate", p.get("endDate").asText());
+            if (p.has("granularity")) plan.params.put("granularity", p.get("granularity").asText());
+            if (p.has("periods"))     plan.params.put("periods", p.get("periods").asInt(4));
+            if (p.has("dimension"))   plan.params.put("dimension", p.get("dimension").asText("carrier"));
+
+            // Validated list params
+            plan.params.put("carriers",   parseAndValidateList(p.path("carriers"),   VALID_CARRIERS));
+            plan.params.put("regions",    parseAndValidateList(p.path("regions"),    VALID_REGIONS));
+            plan.params.put("categories", parseAndValidateList(p.path("categories"), VALID_CATEGORIES));
+
+            return plan;
+
+        } catch (Exception e) {
+            log.warn("AI plan parsing failed: {}", e.getMessage());
+            return null;
+        }
     }
 
-    /**
-     * Check if a question is related to logistics data
-     * Returns false for system interaction questions (e.g., "who are you")
-     * Returns true only if question contains logistics-related keywords
-     * Returns false by default for ambiguous questions
-     */
-    private boolean isDataRelatedQuestion(String question) {
-        if (question == null || question.isEmpty()) {
-            System.out.println("DEBUG isDataRelatedQuestion: null or empty question, returning false");
-            return false;
+    @SuppressWarnings("unchecked")
+    private List<String> parseAndValidateList(JsonNode node, Set<String> validValues) {
+        List<String> result = new ArrayList<>();
+        if (node.isArray()) {
+            node.forEach(n -> {
+                String val = n.asText();
+                if (validValues.contains(val)) result.add(val);
+            });
+        }
+        return result;
+    }
+
+    // ── Keyword-based heuristic fallback ──────────────────────────────────────
+
+    private ToolPlan heuristicPlan(String question, QueryRequest request) {
+        String q = question.toLowerCase();
+        ToolPlan plan = new ToolPlan();
+        plan.params = new HashMap<>();
+
+        // Date range
+        LocalDate[] range = extractDateRange(q, request);
+        plan.params.put("startDate", range[0].toString());
+        plan.params.put("endDate",   range[1].toString());
+
+        // Carriers
+        List<String> carriers = VALID_CARRIERS.stream()
+                .filter(c -> q.contains(c.toLowerCase()))
+                .collect(Collectors.toList());
+        plan.params.put("carriers", carriers);
+
+        // Regions
+        List<String> regions = VALID_REGIONS.stream()
+                .filter(r -> q.contains(r.toLowerCase()))
+                .collect(Collectors.toList());
+        plan.params.put("regions", regions);
+
+        // Categories
+        List<String> cats = VALID_CATEGORIES.stream()
+                .filter(c -> q.contains(c.toLowerCase()))
+                .collect(Collectors.toList());
+        plan.params.put("categories", cats);
+
+        // Tool selection
+        if (q.contains("预测") || q.contains("forecast") || q.contains("predict") || q.contains("未来")) {
+            plan.tool = "forecastDemand";
+            plan.params.put("granularity", "week");
+            plan.params.put("periods", 4);
+            plan.answerTemplate = "订单量预测";
+        } else if (q.contains("承运商") || q.contains("carrier") || q.contains("快递公司") || q.contains("哪家")) {
+            plan.tool = "getBreakdown";
+            plan.params.put("dimension", "carrier");
+            plan.answerTemplate = "承运商分析";
+        } else if (q.contains("趋势") || q.contains("trend") || q.contains("变化") || q.contains("每月") || q.contains("monthly") || q.contains("每周") || q.contains("weekly")) {
+            plan.tool = "getTimeSeries";
+            plan.params.put("granularity", q.contains("日") || q.contains("day") ? "day"
+                    : q.contains("周") || q.contains("week") ? "week" : "month");
+            plan.answerTemplate = "订单量趋势";
+        } else if (q.contains("准时") || q.contains("on-time") || q.contains("交付性能") || q.contains("performance")) {
+            plan.tool = "getDeliveryPerformance";
+            plan.params.put("granularity", "month");
+            plan.answerTemplate = "交付性能分析";
+        } else {
+            plan.tool = "getKpi";
+            plan.answerTemplate = "关键指标汇总";
         }
 
-        String lower = question.toLowerCase();
-        System.out.println("DEBUG isDataRelatedQuestion: checking question: " + question + ", lower: " + lower);
-        System.out.println("DEBUG isDataRelatedQuestion: UNRELATED_KEYWORDS size: " + UNRELATED_KEYWORDS.size() + ", DATA_KEYWORDS size: " + DATA_KEYWORDS.size());
+        return plan;
+    }
 
-        // Check for unrelated system interaction keywords first
-        for (String keyword : UNRELATED_KEYWORDS) {
-            if (lower.contains(keyword)) {
-                System.out.println("DEBUG isDataRelatedQuestion: found unrelated keyword: " + keyword + ", returning false");
-                return false;
+    private LocalDate[] extractDateRange(String q, QueryRequest request) {
+        // Explicit from request
+        if (request.getStartDate() != null && request.getEndDate() != null) {
+            return new LocalDate[]{request.getStartDate(), request.getEndDate()};
+        }
+
+        // Year pattern
+        Matcher yearMatcher = Pattern.compile("(20\\d{2})年?").matcher(q);
+        if (yearMatcher.find()) {
+            int year = Integer.parseInt(yearMatcher.group(1));
+            // Quarter
+            if (q.contains("q1") || q.contains("第一季度")) return new LocalDate[]{LocalDate.of(year,1,1), LocalDate.of(year,3,31)};
+            if (q.contains("q2") || q.contains("第二季度")) return new LocalDate[]{LocalDate.of(year,4,1), LocalDate.of(year,6,30)};
+            if (q.contains("q3") || q.contains("第三季度")) return new LocalDate[]{LocalDate.of(year,7,1), LocalDate.of(year,9,30)};
+            if (q.contains("q4") || q.contains("第四季度")) return new LocalDate[]{LocalDate.of(year,10,1), LocalDate.of(year,12,31)};
+            return new LocalDate[]{LocalDate.of(year,1,1), LocalDate.of(year,12,31)};
+        }
+
+        // Default: full data range
+        return new LocalDate[]{DATA_START, DATA_END};
+    }
+
+    // ── Plan execution ────────────────────────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    private QueryResponse executePlan(ToolPlan plan, String question) {
+        LocalDate startDate = LocalDate.parse(plan.params.getOrDefault("startDate", DATA_START.toString()).toString());
+        LocalDate endDate   = LocalDate.parse(plan.params.getOrDefault("endDate", DATA_END.toString()).toString());
+        List<String> carriers   = (List<String>) plan.params.getOrDefault("carriers",   List.of());
+        List<String> regions    = (List<String>) plan.params.getOrDefault("regions",    List.of());
+        List<String> categories = (List<String>) plan.params.getOrDefault("categories", List.of());
+
+        QueryResponse response = new QueryResponse();
+        response.setQueryPlan("工具: " + plan.tool
+                + " | 时间范围: " + startDate + " 至 " + endDate
+                + (carriers.isEmpty()   ? "" : " | 承运商: " + carriers)
+                + (regions.isEmpty()    ? "" : " | 地区: " + regions)
+                + (categories.isEmpty() ? "" : " | 品类: " + categories));
+
+        Map<String, Object> filters = new LinkedHashMap<>();
+        filters.put("startDate", startDate.toString());
+        filters.put("endDate",   endDate.toString());
+        if (!carriers.isEmpty())   filters.put("carriers",   carriers);
+        if (!regions.isEmpty())    filters.put("regions",    regions);
+        if (!categories.isEmpty()) filters.put("categories", categories);
+        response.setFilters(filters);
+
+        switch (plan.tool) {
+
+            case "getKpi" -> {
+                KpiResponse kpi = dashboardService.getKPIs(startDate, endDate, carriers, regions, categories);
+                response.setChartType("kpi");
+                response.setAnswer(formatKpiAnswer(kpi, plan.answerTemplate, carriers, regions, startDate, endDate));
+                response.setExplanation("从数据库实时聚合 — status='delayed' 计为延误，status='delivered' 计为已送达。");
+                response.setMetrics(List.of("totalOrders", "deliveredOrders", "delayedOrders", "onTimeRate", "avgDeliveryDays"));
+
+                Map<String, Object> chartData = new LinkedHashMap<>();
+                chartData.put("chartType", "kpi");
+                chartData.put("labels", List.of("总订单", "已送达", "延误"));
+                chartData.put("values", List.of(kpi.getTotalOrders(), kpi.getDeliveredOrders(), kpi.getDelayedOrders()));
+                chartData.put("kpiSummary", Map.of(
+                        "onTimeRate",     kpi.getOnTimeRate() + "%",
+                        "avgDeliveryDays", kpi.getAvgDeliveryDays() + " 天"
+                ));
+                response.setChartData(chartData);
+
+                List<Map<String, Object>> raw = List.of(Map.of(
+                        "总订单",     kpi.getTotalOrders(),
+                        "已送达",     kpi.getDeliveredOrders(),
+                        "延误",       kpi.getDelayedOrders(),
+                        "准时率",     kpi.getOnTimeRate() + "%",
+                        "平均送达天数", kpi.getAvgDeliveryDays()
+                ));
+                response.setRawData(raw);
+            }
+
+            case "getTimeSeries" -> {
+                String gran = plan.params.getOrDefault("granularity", "month").toString();
+                if (!VALID_GRAN.contains(gran)) gran = "month";
+                TimeSeriesResponse ts = dashboardService.getOrderVolumeTimeSeries(gran, startDate, endDate, carriers, regions, categories);
+                response.setChartType("time_series");
+                response.setAnswer(plan.answerTemplate + "（" + startDate + " 至 " + endDate + "，粒度：" + gran + "）");
+                response.setExplanation("按 " + gran + " 聚合的订单量趋势，来自实时数据库查询。");
+                response.setMetrics(List.of("订单量", "时间趋势"));
+
+                List<String> labels = ts.getData().stream().map(d -> d.getDate().toString()).collect(Collectors.toList());
+                List<Long>   values = ts.getData().stream().map(TimeSeriesData::getCount).collect(Collectors.toList());
+                Map<String, Object> chartData = new LinkedHashMap<>();
+                chartData.put("chartType", "line");
+                chartData.put("labels", labels);
+                chartData.put("values", values);
+                response.setChartData(chartData);
+
+                List<Map<String, Object>> raw = ts.getData().stream()
+                        .map(d -> Map.<String,Object>of("date", d.getDate().toString(), "count", d.getCount()))
+                        .collect(Collectors.toList());
+                response.setRawData(raw);
+            }
+
+            case "getBreakdown" -> {
+                CarrierBreakdownResponse bd = dashboardService.getCarrierBreakdown(startDate, endDate, carriers, regions, categories);
+                response.setChartType("bar");
+                response.setAnswer("各承运商绩效分析（" + startDate + " 至 " + endDate + "）");
+                response.setExplanation("按承运商汇总订单量和延误率，status='delayed' 计为延误。");
+                response.setMetrics(List.of("总订单", "延误订单", "延误率"));
+
+                List<String> labels = bd.getData().stream().map(CarrierBreakdown::getCarrier).collect(Collectors.toList());
+                List<Long>   values = bd.getData().stream().map(CarrierBreakdown::getTotalOrders).collect(Collectors.toList());
+                Map<String, Object> chartData = new LinkedHashMap<>();
+                chartData.put("chartType", "bar");
+                chartData.put("labels", labels);
+                chartData.put("values", values);
+                chartData.put("delayedValues", bd.getData().stream().map(CarrierBreakdown::getDelayedOrders).collect(Collectors.toList()));
+                chartData.put("delayRates",    bd.getData().stream().map(c -> c.getDelayRate().toString()).collect(Collectors.toList()));
+                response.setChartData(chartData);
+
+                List<Map<String, Object>> raw = bd.getData().stream()
+                        .map(c -> Map.<String,Object>of(
+                                "carrier",      c.getCarrier(),
+                                "totalOrders",  c.getTotalOrders(),
+                                "delayedOrders", c.getDelayedOrders(),
+                                "delayRate",    c.getDelayRate() + "%"
+                        ))
+                        .collect(Collectors.toList());
+                response.setRawData(raw);
+            }
+
+            case "getDeliveryPerformance" -> {
+                String gran = plan.params.getOrDefault("granularity", "month").toString();
+                if (!VALID_GRAN.contains(gran)) gran = "month";
+                DeliveryPerformanceResponse dp = dashboardService.getDeliveryPerformance(gran, startDate, endDate, carriers, regions, categories);
+                response.setChartType("bar");
+                response.setAnswer("交付性能分析（" + startDate + " 至 " + endDate + "）");
+                response.setExplanation("按时间段展示准时 vs 延误订单数，直接来自 status 字段统计。");
+                response.setMetrics(List.of("准时订单", "延误订单"));
+
+                List<String> labels = dp.getData().stream().map(DeliveryPerformance::getPeriod).collect(Collectors.toList());
+                List<Long> onTime  = dp.getData().stream().map(DeliveryPerformance::getOnTime).collect(Collectors.toList());
+                List<Long> delayed = dp.getData().stream().map(DeliveryPerformance::getDelayed).collect(Collectors.toList());
+                Map<String, Object> chartData = new LinkedHashMap<>();
+                chartData.put("chartType", "bar");
+                chartData.put("labels", labels);
+                chartData.put("values", onTime);
+                chartData.put("delayedValues", delayed);
+                response.setChartData(chartData);
+
+                List<Map<String, Object>> raw = dp.getData().stream()
+                        .map(d -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("period",  d.getPeriod());
+                            row.put("onTime",  d.getOnTime());
+                            row.put("delayed", d.getDelayed());
+                            return row;
+                        })
+                        .collect(Collectors.toList());
+                response.setRawData(raw);
+            }
+
+            case "forecastDemand" -> {
+                String gran = plan.params.getOrDefault("granularity", "week").toString();
+                if (!VALID_GRAN.contains(gran)) gran = "week";
+                int periods = Integer.parseInt(plan.params.getOrDefault("periods", 4).toString());
+                ForecastResponse fc = forecastingService.forecastDemand(gran, periods, startDate, endDate, carriers, regions, categories);
+                response.setChartType("forecast");
+                response.setAnswer("未来 " + periods + " 个" + granLabel(gran) + "订单量预测");
+                response.setExplanation("使用 " + fc.getAlgorithm() + " 基于历史数据确定性计算。AI 仅负责参数提取，不生成预测值。");
+                response.setMetrics(List.of("历史订单量", "预测订单量", "安全库存建议"));
+
+                List<String> labels   = fc.getData().stream().map(d -> d.getDate().toString()).collect(Collectors.toList());
+                List<Long>   histVals = fc.getData().stream().filter(d -> !d.isForecast()).map(ForecastData::getValue).collect(Collectors.toList());
+                List<Long>   foreVals = fc.getData().stream().filter(ForecastData::isForecast).map(ForecastData::getValue).collect(Collectors.toList());
+                int splitIdx = (int) fc.getData().stream().filter(d -> !d.isForecast()).count();
+                Map<String, Object> chartData = new LinkedHashMap<>();
+                chartData.put("chartType", "forecast");
+                chartData.put("labels", labels);
+                chartData.put("historicalValues", histVals);
+                chartData.put("forecastValues",   foreVals);
+                chartData.put("splitIndex", splitIdx);
+                chartData.put("algorithm",  fc.getAlgorithm());
+                chartData.put("recommendations", fc.getRecommendations());
+                response.setChartData(chartData);
+
+                List<Map<String, Object>> raw = fc.getData().stream()
+                        .map(d -> Map.<String,Object>of(
+                                "date",       d.getDate().toString(),
+                                "value",      d.getValue(),
+                                "isForecast", d.isForecast()
+                        ))
+                        .collect(Collectors.toList());
+                response.setRawData(raw);
+            }
+
+            default -> {
+                response.setChartType("none");
+                response.setAnswer("无法识别的分析类型，请换一种问法。");
             }
         }
 
-        // Check for logistics data keywords
-        for (String keyword : DATA_KEYWORDS) {
-            if (lower.contains(keyword)) {
-                System.out.println("DEBUG isDataRelatedQuestion: found data keyword: " + keyword + ", returning true");
-                return true;
-            }
-        }
-
-        // Default: assume NOT data-related for ambiguous questions
-        // This prevents showing charts for unclear questions
-        System.out.println("DEBUG isDataRelatedQuestion: no keywords found, returning false (ambiguous question)");
-        return false;
+        return response;
     }
 
-    /**
-     * Populate basic response fields for non-data-related questions
-     */
-    private void populateBasicResponseFields(QueryResponse response, QueryRequest request,
-                                            String question, String explanation) {
-        response.setExplanation(explanation);
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-        // Set default metrics
-        List<String> defaultMetrics = Arrays.asList("系统交互", "问题分类");
-        response.setMetrics(defaultMetrics);
-
-        // Set query plan
-        response.setQueryPlan("系统检测到此问题与物流数据无关，提供通用响应。");
-
-        // Add filters if present in request
-        if (request.getStartDate() != null || request.getEndDate() != null ||
-            request.getCarriers() != null || request.getRegions() != null) {
-            Map<String, Object> filters = new HashMap<>();
-            if (request.getStartDate() != null) filters.put("startDate", request.getStartDate());
-            if (request.getEndDate() != null) filters.put("endDate", request.getEndDate());
-            if (request.getCarriers() != null) filters.put("carriers", request.getCarriers());
-            if (request.getRegions() != null) filters.put("regions", request.getRegions());
-            response.setFilters(filters);
-        }
-
-        // Generate minimal raw data
-        List<Map<String, Object>> rawData = new ArrayList<>();
-        Map<String, Object> sampleRow = new HashMap<>();
-        sampleRow.put("question", question);
-        sampleRow.put("question_type", "system_interaction");
-        sampleRow.put("response_type", "text_only");
-        sampleRow.put("timestamp", LocalDate.now().toString());
-        rawData.add(sampleRow);
-        response.setRawData(rawData);
+    private String formatKpiAnswer(KpiResponse kpi, String template, List<String> carriers,
+                                   List<String> regions, LocalDate start, LocalDate end) {
+        String scope = "";
+        if (!carriers.isEmpty()) scope += " [承运商: " + String.join(", ", carriers) + "]";
+        if (!regions.isEmpty())  scope += " [地区: " + String.join(", ", regions) + "]";
+        return String.format("%s (%s ~ %s)%s\n总订单: %d | 已送达: %d | 延误: %d | 准时率: %s%% | 平均送达: %s天",
+                template, start, end, scope,
+                kpi.getTotalOrders(), kpi.getDeliveredOrders(), kpi.getDelayedOrders(),
+                kpi.getOnTimeRate(), kpi.getAvgDeliveryDays());
     }
 
-    /**
-     * Populate response with mock data for visualization and raw data when AI is unavailable
-     */
-    private void populateResponseWithMockData(QueryResponse response, QueryRequest request, String question) {
-        if (question == null || question.isEmpty()) {
-            question = "订单趋势";
-        }
-
-        // Check if question is related to logistics data
-        boolean isDataRelated = isDataRelatedQuestion(question);
-        System.out.println("DEBUG populateResponseWithMockData: isDataRelated = " + isDataRelated + " for question: " + question);
-
-        if (!isDataRelated) {
-            System.out.println("DEBUG populateResponseWithMockData: non-data-related question, setting empty chart state");
-            // Non-data-related question: set empty chart state
-            response.setChartType("none");
-
-            // Create empty state chart data
-            Map<String, Object> emptyChartData = new HashMap<>();
-            emptyChartData.put("labels", new ArrayList<String>());
-            emptyChartData.put("values", new ArrayList<Long>());
-            emptyChartData.put("chartType", "none");
-            emptyChartData.put("message", "此问题与物流数据无关，无可视化数据。");
-
-            response.setChartData(emptyChartData);
-
-            // Set basic response fields (prevents blank query details)
-            populateBasicResponseFields(response, request, question, "This is a system interaction question, not related to logistics data analysis.");
-            return;
-        }
-
-        String lowerQuestion = question.toLowerCase();
-        Random random = ThreadLocalRandom.current();
-
-        // Ensure basic fields have default values for data-related questions
-        if (response.getExplanation() == null || response.getExplanation().isEmpty()) {
-            response.setExplanation("根据您的查询生成的分析结果。");
-        }
-
-        if (response.getMetrics() == null || response.getMetrics().isEmpty()) {
-            List<String> defaultMetrics = Arrays.asList("订单量", "交货性能", "承运商分析");
-            response.setMetrics(defaultMetrics);
-        }
-
-        if (response.getQueryPlan() == null || response.getQueryPlan().isEmpty()) {
-            if (model == null) {
-                response.setQueryPlan("使用模拟数据生成查询结果。当实际AI功能恢复时，将基于真实数据进行分析。");
-            } else {
-                response.setQueryPlan("AI功能正常，正在处理您的查询并使用模拟数据进行展示预览。");
-            }
-        }
-
-        // Determine chart type based on question content
-        if (lowerQuestion.contains("趋势") || lowerQuestion.contains("时间") || lowerQuestion.contains("order") || lowerQuestion.contains("trend")) {
-            // Time series data
-            populateTimeSeriesMockData(response, random);
-        } else if (lowerQuestion.contains("承运商") || lowerQuestion.contains("carrier") || lowerQuestion.contains("快递")) {
-            // Carrier breakdown data
-            populateCarrierBreakdownMockData(response, random);
-        } else if (lowerQuestion.contains("交付") || lowerQuestion.contains("delivery") || lowerQuestion.contains("performance")) {
-            // Delivery performance data
-            populateDeliveryPerformanceMockData(response, random);
-        } else if (lowerQuestion.contains("kpi") || lowerQuestion.contains("指标") || lowerQuestion.contains("率") || lowerQuestion.contains("rate")) {
-            // KPI data
-            populateKpiMockData(response, random);
-        } else {
-            // Default to time series
-            populateTimeSeriesMockData(response, random);
-        }
-
-        // Add filters from request
-        if (request.getStartDate() != null || request.getEndDate() != null ||
-            request.getCarriers() != null || request.getRegions() != null) {
-            Map<String, Object> filters = new HashMap<>();
-            if (request.getStartDate() != null) filters.put("startDate", request.getStartDate());
-            if (request.getEndDate() != null) filters.put("endDate", request.getEndDate());
-            if (request.getCarriers() != null) filters.put("carriers", request.getCarriers());
-            if (request.getRegions() != null) filters.put("regions", request.getRegions());
-            response.setFilters(filters);
-        }
-
-        // Set metrics based on question
-        List<String> metrics = new ArrayList<>();
-        if (lowerQuestion.contains("订单") || lowerQuestion.contains("order")) {
-            metrics.add("订单量");
-            metrics.add("订单价值");
-        }
-        if (lowerQuestion.contains("交付") || lowerQuestion.contains("delivery")) {
-            metrics.add("准时交货率");
-            metrics.add("平均交货天数");
-            metrics.add("延迟订单数");
-        }
-        if (lowerQuestion.contains("承运商") || lowerQuestion.contains("carrier")) {
-            metrics.add("承运商分布");
-            metrics.add("延迟率对比");
-        }
-        if (metrics.isEmpty()) {
-            metrics.add("订单趋势");
-            metrics.add("交货性能");
-        }
-        response.setMetrics(metrics);
-
-        // Set query plan based on AI availability
-        if (model == null) {
-            response.setQueryPlan("AI服务暂时不可用。系统正在使用模拟数据展示查询结果。当实际功能恢复时，将使用真实数据分析工具处理您的查询。");
-        } else {
-            response.setQueryPlan("AI功能正常。当前使用模拟数据进行展示预览，实际数据查询功能已就绪。");
-        }
-
-        // Generate raw data (sample rows)
-        List<Map<String, Object>> rawData = generateRawMockData(random);
-        response.setRawData(rawData);
+    private String granLabel(String gran) {
+        return switch (gran) { case "day" -> "天"; case "week" -> "周"; default -> "月"; };
     }
 
-    private void populateTimeSeriesMockData(QueryResponse response, Random random) {
-        response.setChartType("time_series");
+    // ── Inner class ───────────────────────────────────────────────────────────
 
-        // Create simplified chart data for frontend
-        Map<String, Object> chartData = new HashMap<>();
-        List<String> labels = new ArrayList<>();
-        List<Long> values = new ArrayList<>();
-
-        LocalDate startDate = LocalDate.now().minusDays(30);
-
-        for (int i = 0; i < 31; i++) {
-            LocalDate date = startDate.plusDays(i);
-            labels.add(date.format(DateTimeFormatter.ofPattern("MM-dd")));
-            values.add(50L + random.nextInt(200)); // Random between 50-250
-        }
-
-        chartData.put("labels", labels);
-        chartData.put("values", values);
-        chartData.put("chartType", "line");
-
-        response.setChartData(chartData);
-        // Append mock data explanation to existing explanation if any
-        String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示过去30天订单趋势的模拟数据。当实际AI功能恢复时，将根据您的筛选条件提供真实的时间序列分析。";
-        if (existingExplanation == null || existingExplanation.isEmpty()) {
-            response.setExplanation(mockExplanation);
-        } else {
-            response.setExplanation(existingExplanation + " " + mockExplanation);
-        }
-    }
-
-    private void populateCarrierBreakdownMockData(QueryResponse response, Random random) {
-        response.setChartType("bar");
-
-        // Create simplified chart data for frontend
-        Map<String, Object> chartData = new HashMap<>();
-        List<String> labels = new ArrayList<>();
-        List<Long> values = new ArrayList<>();
-
-        String[] carriers = {"UPS", "FedEx", "DHL", "USPS", "Amazon Logistics", "Regional Carrier"};
-
-        for (String carrier : carriers) {
-            labels.add(carrier);
-            values.add(500L + random.nextInt(2000)); // 500-2500 orders
-        }
-
-        chartData.put("labels", labels);
-        chartData.put("values", values);
-        chartData.put("chartType", "bar");
-
-        response.setChartData(chartData);
-        // Append mock data explanation to existing explanation if any
-        String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示各承运商订单分布的模拟数据。当实际AI功能恢复时，将根据您的筛选条件提供真实的承运商性能分析。";
-        if (existingExplanation == null || existingExplanation.isEmpty()) {
-            response.setExplanation(mockExplanation);
-        } else {
-            response.setExplanation(existingExplanation + " " + mockExplanation);
-        }
-    }
-
-    private void populateDeliveryPerformanceMockData(QueryResponse response, Random random) {
-        response.setChartType("bar");
-
-        // Create simplified chart data for frontend
-        Map<String, Object> chartData = new HashMap<>();
-        List<String> labels = new ArrayList<>();
-        List<Long> values = new ArrayList<>();
-
-        // Generate weekly data for last 4 weeks
-        LocalDate today = LocalDate.now();
-
-        for (int i = 3; i >= 0; i--) {
-            LocalDate weekStart = today.minusWeeks(i).with(java.time.DayOfWeek.MONDAY);
-            String period = weekStart.format(DateTimeFormatter.ofPattern("yyyy-'W'ww"));
-            labels.add(period);
-            Long onTime = 200L + random.nextInt(300); // 200-500
-            values.add(onTime);
-        }
-
-        chartData.put("labels", labels);
-        chartData.put("values", values);
-        chartData.put("chartType", "bar");
-
-        response.setChartData(chartData);
-        // Append mock data explanation to existing explanation if any
-        String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示过去4周准时交货数量的模拟数据。当实际AI功能恢复时，将根据您的筛选条件提供真实的交货性能分析。";
-        if (existingExplanation == null || existingExplanation.isEmpty()) {
-            response.setExplanation(mockExplanation);
-        } else {
-            response.setExplanation(existingExplanation + " " + mockExplanation);
-        }
-    }
-
-    private void populateKpiMockData(QueryResponse response, Random random) {
-        response.setChartType("kpi");
-
-        // Create simplified chart data for frontend - for KPI we can show a bar chart with metrics
-        Map<String, Object> chartData = new HashMap<>();
-        List<String> labels = new ArrayList<>();
-        List<Long> values = new ArrayList<>();
-
-        Long totalOrders = 10000L + random.nextInt(20000); // 10000-30000
-        Long deliveredOrders = totalOrders * 8 / 10 + random.nextInt(totalOrders.intValue() / 10); // 80-90% delivered
-        Long delayedOrders = deliveredOrders / 10 + random.nextInt(deliveredOrders.intValue() / 5); // 10-30% of delivered delayed
-        BigDecimal onTimeRate = BigDecimal.valueOf((deliveredOrders - delayedOrders) * 100.0 / deliveredOrders).setScale(2, BigDecimal.ROUND_HALF_UP);
-        BigDecimal avgDeliveryDays = BigDecimal.valueOf(3.5 + random.nextDouble() * 2.5).setScale(2, BigDecimal.ROUND_HALF_UP); // 3.5-6.0 days
-
-        // Create KPI summary for chart
-        labels.add("Total Orders");
-        values.add(totalOrders);
-        labels.add("Delivered Orders");
-        values.add(deliveredOrders);
-        labels.add("Delayed Orders");
-        values.add(delayedOrders);
-
-        chartData.put("labels", labels);
-        chartData.put("values", values);
-        chartData.put("chartType", "bar");
-        chartData.put("kpiSummary", Map.of(
-            "onTimeRate", onTimeRate.toString() + "%",
-            "avgDeliveryDays", avgDeliveryDays.toString() + " days"
-        ));
-
-        response.setChartData(chartData);
-        // Append mock data explanation to existing explanation if any
-        String existingExplanation = response.getExplanation();
-        String mockExplanation = "显示关键绩效指标的模拟数据。准时交货率：" + onTimeRate + "%，平均交货天数：" + avgDeliveryDays + "天。当实际AI功能恢复时，将根据您的筛选条件提供真实的KPI分析。";
-        if (existingExplanation == null || existingExplanation.isEmpty()) {
-            response.setExplanation(mockExplanation);
-        } else {
-            response.setExplanation(existingExplanation + " " + mockExplanation);
-        }
-    }
-
-    private List<Map<String, Object>> generateRawMockData(Random random) {
-        List<Map<String, Object>> rawData = new ArrayList<>();
-        String[] carriers = {"UPS", "FedEx", "DHL", "USPS", "Amazon Logistics", "Regional Carrier"};
-        String[] cities = {"New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia"};
-        String[] statuses = {"delivered", "in_transit", "pending", "cancelled"};
-
-        for (int i = 0; i < 10; i++) { // Generate 10 sample rows
-            Map<String, Object> row = new HashMap<>();
-            row.put("id", i + 1);
-            row.put("order_date", LocalDate.now().minusDays(random.nextInt(30)).toString());
-            row.put("promised_delivery_date", LocalDate.now().minusDays(random.nextInt(20)).toString());
-            row.put("actual_delivery_date", LocalDate.now().minusDays(random.nextInt(15)).toString());
-            row.put("status", statuses[random.nextInt(statuses.length)]);
-            row.put("carrier", carriers[random.nextInt(carriers.length)]);
-            row.put("destination_city", cities[random.nextInt(cities.length)]);
-            row.put("destination_state", "CA");
-            row.put("destination_region", "West");
-            row.put("order_value", BigDecimal.valueOf(50 + random.nextDouble() * 4950).setScale(2, BigDecimal.ROUND_HALF_UP));
-            row.put("sku", "SKU-" + String.format("%04d", 1000 + random.nextInt(9000)));
-            row.put("quantity", 1 + random.nextInt(50));
-
-            rawData.add(row);
-        }
-
-        return rawData;
+    private static class ToolPlan {
+        String tool;
+        String answerTemplate;
+        Map<String, Object> params;
     }
 }

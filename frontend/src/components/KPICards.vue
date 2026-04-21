@@ -29,7 +29,7 @@ const kpiCards = computed(() => [
     icon: 'Clock',
     color: '#e6a23c',
     trend: null,
-    description: '在承诺日期之后交货的订单'
+    description: 'status 为 delayed 的订单'
   },
   {
     title: '准时率',
@@ -37,7 +37,7 @@ const kpiCards = computed(() => [
     icon: 'SuccessFilled',
     color: '#67c23a',
     trend: null,
-    description: '准时交货的订单百分比'
+    description: '已送达订单占总订单的百分比'
   },
   {
     title: '平均交货天数',

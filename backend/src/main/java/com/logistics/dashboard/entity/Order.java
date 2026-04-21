@@ -12,175 +12,115 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "client_id", length = 20)
+    private String clientId;
+
+    @Column(name = "order_id", length = 50, unique = true)
+    private String orderId;
+
     @Column(name = "order_date", nullable = false)
     private LocalDate orderDate;
 
-    @Column(name = "promised_delivery_date", nullable = false)
-    private LocalDate promisedDeliveryDate;
-
-    @Column(name = "actual_delivery_date")
-    private LocalDate actualDeliveryDate;
-
-    @Column(nullable = false, length = 20)
-    private String status;
+    @Column(name = "delivery_date")
+    private LocalDate deliveryDate;
 
     @Column(length = 50)
     private String carrier;
 
+    @Column(name = "origin_city", length = 100)
+    private String originCity;
+
     @Column(name = "destination_city", length = 100)
     private String destinationCity;
 
-    @Column(name = "destination_state", length = 50)
-    private String destinationState;
-
-    @Column(name = "destination_region", length = 50)
-    private String destinationRegion;
-
-    @Column(name = "order_value", precision = 10, scale = 2)
-    private BigDecimal orderValue;
+    @Column(length = 20)
+    private String status;
 
     @Column(length = 50)
     private String sku;
 
+    @Column(name = "product_category", length = 50)
+    private String productCategory;
+
     private Integer quantity;
 
-    // Derived fields (not stored in database)
-    @Transient
-    public Boolean getIsDelayed() {
-        if (actualDeliveryDate == null || promisedDeliveryDate == null) {
-            return null;
-        }
-        return actualDeliveryDate.isAfter(promisedDeliveryDate);
-    }
+    @Column(name = "unit_price_usd", precision = 10, scale = 2)
+    private BigDecimal unitPriceUsd;
+
+    @Column(name = "order_value_usd", precision = 10, scale = 2)
+    private BigDecimal orderValueUsd;
+
+    @Column(name = "is_promo")
+    private Boolean isPromo;
+
+    @Column(name = "promo_discount_pct", precision = 5, scale = 2)
+    private BigDecimal promoDiscountPct;
+
+    @Column(length = 20)
+    private String region;
+
+    @Column(length = 30)
+    private String warehouse;
 
     @Transient
     public Integer getDeliveryDays() {
-        if (actualDeliveryDate == null || orderDate == null) {
-            return null;
-        }
-        return (int) java.time.temporal.ChronoUnit.DAYS.between(orderDate, actualDeliveryDate);
+        if (deliveryDate == null || orderDate == null) return null;
+        return (int) java.time.temporal.ChronoUnit.DAYS.between(orderDate, deliveryDate);
     }
 
-    @Transient
-    public Boolean getIsDelivered() {
-        return "delivered".equals(status);
-    }
+    public Order() {}
 
-    // Constructors
-    public Order() {
-    }
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
 
-    public Order(Long id, LocalDate orderDate, LocalDate promisedDeliveryDate, LocalDate actualDeliveryDate,
-                 String status, String carrier, String destinationCity, String destinationState,
-                 String destinationRegion, BigDecimal orderValue, String sku, Integer quantity) {
-        this.id = id;
-        this.orderDate = orderDate;
-        this.promisedDeliveryDate = promisedDeliveryDate;
-        this.actualDeliveryDate = actualDeliveryDate;
-        this.status = status;
-        this.carrier = carrier;
-        this.destinationCity = destinationCity;
-        this.destinationState = destinationState;
-        this.destinationRegion = destinationRegion;
-        this.orderValue = orderValue;
-        this.sku = sku;
-        this.quantity = quantity;
-    }
+    public String getClientId() { return clientId; }
+    public void setClientId(String clientId) { this.clientId = clientId; }
 
-    // Getters and Setters
-    public Long getId() {
-        return id;
-    }
+    public String getOrderId() { return orderId; }
+    public void setOrderId(String orderId) { this.orderId = orderId; }
 
-    public void setId(Long id) {
-        this.id = id;
-    }
+    public LocalDate getOrderDate() { return orderDate; }
+    public void setOrderDate(LocalDate orderDate) { this.orderDate = orderDate; }
 
-    public LocalDate getOrderDate() {
-        return orderDate;
-    }
+    public LocalDate getDeliveryDate() { return deliveryDate; }
+    public void setDeliveryDate(LocalDate deliveryDate) { this.deliveryDate = deliveryDate; }
 
-    public void setOrderDate(LocalDate orderDate) {
-        this.orderDate = orderDate;
-    }
+    public String getCarrier() { return carrier; }
+    public void setCarrier(String carrier) { this.carrier = carrier; }
 
-    public LocalDate getPromisedDeliveryDate() {
-        return promisedDeliveryDate;
-    }
+    public String getOriginCity() { return originCity; }
+    public void setOriginCity(String originCity) { this.originCity = originCity; }
 
-    public void setPromisedDeliveryDate(LocalDate promisedDeliveryDate) {
-        this.promisedDeliveryDate = promisedDeliveryDate;
-    }
+    public String getDestinationCity() { return destinationCity; }
+    public void setDestinationCity(String destinationCity) { this.destinationCity = destinationCity; }
 
-    public LocalDate getActualDeliveryDate() {
-        return actualDeliveryDate;
-    }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
 
-    public void setActualDeliveryDate(LocalDate actualDeliveryDate) {
-        this.actualDeliveryDate = actualDeliveryDate;
-    }
+    public String getSku() { return sku; }
+    public void setSku(String sku) { this.sku = sku; }
 
-    public String getStatus() {
-        return status;
-    }
+    public String getProductCategory() { return productCategory; }
+    public void setProductCategory(String productCategory) { this.productCategory = productCategory; }
 
-    public void setStatus(String status) {
-        this.status = status;
-    }
+    public Integer getQuantity() { return quantity; }
+    public void setQuantity(Integer quantity) { this.quantity = quantity; }
 
-    public String getCarrier() {
-        return carrier;
-    }
+    public BigDecimal getUnitPriceUsd() { return unitPriceUsd; }
+    public void setUnitPriceUsd(BigDecimal unitPriceUsd) { this.unitPriceUsd = unitPriceUsd; }
 
-    public void setCarrier(String carrier) {
-        this.carrier = carrier;
-    }
+    public BigDecimal getOrderValueUsd() { return orderValueUsd; }
+    public void setOrderValueUsd(BigDecimal orderValueUsd) { this.orderValueUsd = orderValueUsd; }
 
-    public String getDestinationCity() {
-        return destinationCity;
-    }
+    public Boolean getIsPromo() { return isPromo; }
+    public void setIsPromo(Boolean isPromo) { this.isPromo = isPromo; }
 
-    public void setDestinationCity(String destinationCity) {
-        this.destinationCity = destinationCity;
-    }
+    public BigDecimal getPromoDiscountPct() { return promoDiscountPct; }
+    public void setPromoDiscountPct(BigDecimal promoDiscountPct) { this.promoDiscountPct = promoDiscountPct; }
 
-    public String getDestinationState() {
-        return destinationState;
-    }
+    public String getRegion() { return region; }
+    public void setRegion(String region) { this.region = region; }
 
-    public void setDestinationState(String destinationState) {
-        this.destinationState = destinationState;
-    }
-
-    public String getDestinationRegion() {
-        return destinationRegion;
-    }
-
-    public void setDestinationRegion(String destinationRegion) {
-        this.destinationRegion = destinationRegion;
-    }
-
-    public BigDecimal getOrderValue() {
-        return orderValue;
-    }
-
-    public void setOrderValue(BigDecimal orderValue) {
-        this.orderValue = orderValue;
-    }
-
-    public String getSku() {
-        return sku;
-    }
-
-    public void setSku(String sku) {
-        this.sku = sku;
-    }
-
-    public Integer getQuantity() {
-        return quantity;
-    }
-
-    public void setQuantity(Integer quantity) {
-        this.quantity = quantity;
-    }
+    public String getWarehouse() { return warehouse; }
+    public void setWarehouse(String warehouse) { this.warehouse = warehouse; }
 }
