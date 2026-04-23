@@ -37,6 +37,73 @@ public class ForecastingService {
         return forecastDemand(granularity, periods, startDate, endDate, carriers, regions, null);
     }
 
+    /**
+     * Forecast a metric (on-time rate or delay rate) over future periods.
+     * Uses the same algorithms as demand forecasting but on percentage time series.
+     */
+    public ForecastResponse forecastMetric(String metricType, String granularity, int periods,
+                                           LocalDate startDate, LocalDate endDate,
+                                           List<String> carriers, List<String> regions,
+                                           List<String> categories) {
+        log.info("Forecasting metric: metricType={} granularity={} periods={} {} to {}",
+                metricType, granularity, periods, startDate, endDate);
+
+        try {
+            String[] c   = toArray(carriers);
+            String[] r   = toArray(regions);
+            String[] cat = toArray(categories);
+
+            List<Object[]> rows = orderRepository.getHistoricalMetricByPeriod(
+                    metricType, granularity, startDate, endDate, c, r, cat);
+
+            if (rows.isEmpty()) {
+                return createEmptyForecast(granularity, periods, "无历史数据可用于预测");
+            }
+
+            List<LocalDate> dates  = new ArrayList<>();
+            double[]        values = new double[rows.size()];
+            for (int i = 0; i < rows.size(); i++) {
+                dates.add(toLocalDate(rows.get(i)[0]));
+                values[i] = ((Number) rows.get(i)[1]).doubleValue();
+            }
+
+            ForecastResult result;
+            if (values.length >= 6) {
+                result = holtsDoubleExponentialSmoothing(values, periods);
+            } else if (values.length >= 2) {
+                result = linearRegression(values, periods);
+            } else {
+                result = sesWithBestAlpha(values, periods);
+            }
+
+            List<ForecastData> data = new ArrayList<>();
+            for (int i = 0; i < dates.size(); i++) {
+                data.add(new ForecastData(dates.get(i), BigDecimal.valueOf(values[i]).setScale(2, RoundingMode.HALF_UP), false));
+            }
+            LocalDate lastDate = dates.get(dates.size() - 1);
+            for (int i = 0; i < result.forecasts.length; i++) {
+                double raw = Math.max(0, Math.min(100, result.forecasts[i]));
+                BigDecimal val = BigDecimal.valueOf(raw).setScale(2, RoundingMode.HALF_UP);
+                data.add(new ForecastData(incrementDate(lastDate, granularity, i + 1), val, true));
+            }
+
+            String metricLabel = "on_time_rate".equals(metricType) ? "准时率" : "延误率";
+            return new ForecastResponse(
+                    granularity,
+                    periods,
+                    result.algorithm,
+                    null,
+                    data,
+                    buildMetricRecommendations(values, result.forecasts, result.algorithm, metricLabel),
+                    metricType
+            );
+
+        } catch (Exception e) {
+            log.error("Metric forecast error: {}", e.getMessage(), e);
+            return createEmptyForecast(granularity, periods, "预测失败: " + e.getMessage());
+        }
+    }
+
     public ForecastResponse forecastDemand(String granularity, int periods,
                                            LocalDate startDate, LocalDate endDate,
                                            List<String> carriers, List<String> regions,
@@ -63,14 +130,17 @@ public class ForecastingService {
                 values[i] = ((Number) rows.get(i)[1]).doubleValue();
             }
 
-            // Select algorithm
+            // Select algorithm based on data length
+            // >= 6: Holt's DES (enough data for stable level+trend estimation + validation)
+            // 2-5:  Linear Regression (captures trend better than flat SES on short series)
+            // 1:    Simple Exponential Smoothing (naive level-only forecast)
             ForecastResult result;
-            if (values.length >= 4) {
+            if (values.length >= 6) {
                 result = holtsDoubleExponentialSmoothing(values, periods);
             } else if (values.length >= 2) {
-                result = sesWithBestAlpha(values, periods);
-            } else {
                 result = linearRegression(values, periods);
+            } else {
+                result = sesWithBestAlpha(values, periods);
             }
 
             // Build response data list
@@ -220,16 +290,84 @@ public class ForecastingService {
         recentAvg /= window;
 
         double trendPct = recentAvg > 0 ? ((avgForecast - recentAvg) / recentAvg) * 100 : 0;
-        String trendDesc = trendPct > 2 ? "↑ 上升趋势" : trendPct < -2 ? "↓ 下降趋势" : "→ 平稳";
+        String trendDesc = trendPct > 5 ? "↑ 明显上升" : trendPct > 2 ? "↑ 温和上升" : trendPct < -5 ? "↓ 明显下降" : trendPct < -2 ? "↓ 温和下降" : "→ 平稳";
+
+        // Historical fit quality (MAE on last 20% of data if algorithm supports back-testing)
+        double mae = computeHistoricalMAE(history, algorithm);
+        String reliability = mae > 0 ? String.format("历史拟合平均误差：%.0f 单/期", mae) : "历史数据较少，预测仅供参考";
 
         return String.format(
-                "基于 %s：\n" +
+                "基于 %s\n" +
                 "- 趋势判断：%s (%.1f%%)\n" +
                 "- 预测均值：%.0f 单/期\n" +
                 "- 预测区间：%.0f ~ %.0f 单\n" +
+                "- %s\n" +
                 "- 建议备货量（安全库存20%%缓冲）：%.0f 单/期",
-                algorithm, trendDesc, trendPct, avgForecast, minF, maxF, avgForecast * 1.2
+                algorithm, trendDesc, trendPct, avgForecast, minF, maxF, reliability, avgForecast * 1.2
         );
+    }
+
+    private String buildMetricRecommendations(double[] history, double[] forecasts, String algorithm, String metricLabel) {
+        double avgForecast = 0, minF = Double.MAX_VALUE, maxF = -Double.MAX_VALUE;
+        for (double f : forecasts) {
+            avgForecast += f;
+            if (f < minF) minF = f;
+            if (f > maxF) maxF = f;
+        }
+        avgForecast /= forecasts.length;
+
+        double recentAvg = 0;
+        int window = Math.min(forecasts.length, history.length);
+        for (int i = history.length - window; i < history.length; i++) recentAvg += history[i];
+        recentAvg /= window;
+
+        double trendPct = recentAvg > 0 ? ((avgForecast - recentAvg) / recentAvg) * 100 : 0;
+        String trendDesc = trendPct > 2 ? "↑ 预计改善" : trendPct < -2 ? "↓ 预计恶化" : "→ 预计保持平稳";
+        String actionHint = "on_time_rate".equals(metricLabel) || "准时率".equals(metricLabel)
+                ? (avgForecast >= 90 ? "服务质量优秀" : avgForecast >= 80 ? "建议关注潜在延误风险" : "建议优化物流流程以提升准时率")
+                : (avgForecast >= 20 ? "延误风险较高，建议增加备货缓冲" : avgForecast >= 10 ? "延误率可控，保持当前策略" : "延误率较低，运营良好");
+
+        double mae = computeHistoricalMAE(history, algorithm);
+        String reliability = mae > 0 ? String.format("历史拟合平均误差：%.2f%%", mae) : "历史数据较少，预测仅供参考";
+
+        return String.format(
+                "基于 %s 对 %s 的预测\n" +
+                "- 趋势判断：%s (%.1f%%)\n" +
+                "- 预测均值：%.2f%%\n" +
+                "- 预测区间：%.2f%% ~ %.2f%%\n" +
+                "- %s\n" +
+                "- 建议：%s",
+                algorithm, metricLabel, trendDesc, trendPct, avgForecast, minF, maxF, reliability, actionHint
+        );
+    }
+
+    private double computeHistoricalMAE(double[] history, String algorithm) {
+        if (history.length < 4) return 0;
+        // Simple back-test: fit on first 80%, predict last 20%, return MAE
+        int trainN = Math.max(2, history.length - Math.max(1, history.length / 5));
+        double[] train = new double[trainN];
+        System.arraycopy(history, 0, train, 0, trainN);
+        double[] testActual = new double[history.length - trainN];
+        System.arraycopy(history, trainN, testActual, 0, testActual.length);
+
+        double[] testPred;
+        if (algorithm.contains("Holt")) {
+            // Re-run Holt's with default alpha/beta for speed
+            testPred = holtsForecasts(train, 0.3, 0.1, testActual.length);
+        } else {
+            SimpleRegression reg = new SimpleRegression();
+            for (int i = 0; i < train.length; i++) reg.addData(i, train[i]);
+            testPred = new double[testActual.length];
+            for (int i = 0; i < testActual.length; i++) {
+                testPred[i] = reg.predict(train.length + i);
+            }
+        }
+
+        double mae = 0;
+        for (int i = 0; i < testActual.length; i++) {
+            mae += Math.abs(testActual[i] - testPred[i]);
+        }
+        return mae / testActual.length;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

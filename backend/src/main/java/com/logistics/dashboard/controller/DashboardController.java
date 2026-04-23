@@ -96,6 +96,21 @@ public class DashboardController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/category-breakdown")
+    public ResponseEntity<CategoryBreakdownResponse> getCategoryBreakdown(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) List<String> carrier,
+            @RequestParam(required = false) List<String> region,
+            @RequestParam(required = false) List<String> category) {
+
+        log.info("GET /api/dashboard/category-breakdown - startDate={}, endDate={}", startDate, endDate);
+
+        CategoryBreakdownResponse response = dashboardService.getCategoryBreakdown(
+                startDate, endDate, carrier, region, category);
+        return ResponseEntity.ok(response);
+    }
+
     // Default date range endpoints
     @GetMapping("/kpis/recent")
     public ResponseEntity<KpiResponse> getRecentKPIs() {

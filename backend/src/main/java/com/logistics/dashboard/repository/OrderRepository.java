@@ -22,7 +22,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     Long countDeliveredOrdersByDateRange(@Param("startDate") LocalDate startDate,
                                          @Param("endDate") LocalDate endDate);
 
-    @Query("SELECT COUNT(o) FROM Order o WHERE o.status = 'delayed' AND o.orderDate BETWEEN :startDate AND :endDate")
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.deliveryDate > o.promisedDeliveryDate AND o.orderDate BETWEEN :startDate AND :endDate")
     Long countDelayedOrdersByDateRange(@Param("startDate") LocalDate startDate,
                                         @Param("endDate") LocalDate endDate);
 
@@ -55,7 +55,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     @Query("""
         SELECT COUNT(o) FROM Order o
-        WHERE o.status = 'delayed'
+        WHERE o.deliveryDate > o.promisedDeliveryDate
         AND o.orderDate BETWEEN :startDate AND :endDate
         AND (:carriers IS NULL OR o.carrier IN :carriers)
         AND (:regions IS NULL OR o.region IN :regions)
@@ -124,8 +124,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     @Query(value = """
         SELECT period,
-            SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS on_time,
-            SUM(CASE WHEN status = 'delayed'   THEN 1 ELSE 0 END) AS delayed
+            SUM(CASE WHEN delivery_date IS NOT NULL AND delivery_date <= promised_delivery_date THEN 1 ELSE 0 END) AS on_time,
+            SUM(CASE WHEN delivery_date > promised_delivery_date THEN 1 ELSE 0 END) AS delayed
         FROM (
             SELECT
                 CASE :granularity
@@ -133,7 +133,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                     WHEN 'week'  THEN date_trunc('week',  o.order_date)::date
                     WHEN 'month' THEN date_trunc('month', o.order_date)::date
                 END AS period,
-                o.status
+                o.delivery_date,
+                o.promised_delivery_date
             FROM orders o
             WHERE o.order_date BETWEEN :startDate AND :endDate
             AND (CAST(:carriers AS text[]) IS NULL OR o.carrier = ANY(CAST(:carriers AS text[])))
@@ -155,7 +156,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query(value = """
         SELECT o.carrier,
                COUNT(*) AS total_orders,
-               SUM(CASE WHEN o.status = 'delayed' THEN 1 ELSE 0 END) AS delayed_orders
+               SUM(CASE WHEN o.delivery_date > o.promised_delivery_date THEN 1 ELSE 0 END) AS delayed_orders
         FROM orders o
         WHERE o.order_date BETWEEN :startDate AND :endDate
         AND (CAST(:carriers AS text[]) IS NULL OR o.carrier = ANY(CAST(:carriers AS text[])))
@@ -169,6 +170,46 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                                                    @Param("carriers") String[] carriers,
                                                    @Param("regions") String[] regions,
                                                    @Param("categories") String[] categories);
+
+    // ── Region breakdown ──────────────────────────────────────────────────────
+
+    @Query(value = """
+        SELECT o.region,
+               COUNT(*) AS total_orders,
+               SUM(CASE WHEN o.delivery_date > o.promised_delivery_date THEN 1 ELSE 0 END) AS delayed_orders
+        FROM orders o
+        WHERE o.order_date BETWEEN :startDate AND :endDate
+        AND (CAST(:carriers AS text[]) IS NULL OR o.carrier = ANY(CAST(:carriers AS text[])))
+        AND (CAST(:regions AS text[]) IS NULL OR o.region = ANY(CAST(:regions AS text[])))
+        AND (CAST(:categories AS text[]) IS NULL OR o.product_category = ANY(CAST(:categories AS text[])))
+        GROUP BY o.region
+        ORDER BY total_orders DESC
+        """, nativeQuery = true)
+    List<Object[]> getRegionBreakdownWithFilters(@Param("startDate") LocalDate startDate,
+                                                  @Param("endDate") LocalDate endDate,
+                                                  @Param("carriers") String[] carriers,
+                                                  @Param("regions") String[] regions,
+                                                  @Param("categories") String[] categories);
+
+    // ── Category breakdown ──────────────────────────────────────────────────
+
+    @Query(value = """
+        SELECT o.product_category,
+               COUNT(*) AS total_orders,
+               SUM(CASE WHEN o.delivery_date > o.promised_delivery_date THEN 1 ELSE 0 END) AS delayed_orders
+        FROM orders o
+        WHERE o.order_date BETWEEN :startDate AND :endDate
+        AND (CAST(:carriers AS text[]) IS NULL OR o.carrier = ANY(CAST(:carriers AS text[])))
+        AND (CAST(:regions AS text[]) IS NULL OR o.region = ANY(CAST(:regions AS text[])))
+        AND (CAST(:categories AS text[]) IS NULL OR o.product_category = ANY(CAST(:categories AS text[])))
+        GROUP BY o.product_category
+        ORDER BY total_orders DESC
+        """, nativeQuery = true)
+    List<Object[]> getCategoryBreakdownWithFilters(@Param("startDate") LocalDate startDate,
+                                                    @Param("endDate") LocalDate endDate,
+                                                    @Param("carriers") String[] carriers,
+                                                    @Param("regions") String[] regions,
+                                                    @Param("categories") String[] categories);
 
     // ── Historical data for forecasting ──────────────────────────────────────
 
@@ -196,4 +237,45 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
                                                     @Param("carriers") String[] carriers,
                                                     @Param("regions") String[] regions,
                                                     @Param("categories") String[] categories);
+
+    /**
+     * Get historical on-time rate or delay rate by time period.
+     * metricType: 'on_time_rate' → (on-time / total delivered) * 100
+     * metricType: 'delay_rate'   → (delayed / total) * 100
+     */
+    @Query(value = """
+        SELECT period,
+            CASE
+                WHEN :metricType = 'on_time_rate' THEN
+                    ROUND((SUM(CASE WHEN delivery_date IS NOT NULL AND delivery_date <= promised_delivery_date THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0)), 2)
+                WHEN :metricType = 'delay_rate' THEN
+                    ROUND((SUM(CASE WHEN delivery_date > promised_delivery_date THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0)), 2)
+                ELSE 0
+            END AS rate
+        FROM (
+            SELECT
+                CASE :granularity
+                    WHEN 'day'   THEN o.order_date::date
+                    WHEN 'week'  THEN date_trunc('week',  o.order_date)::date
+                    WHEN 'month' THEN date_trunc('month', o.order_date)::date
+                END AS period,
+                o.delivery_date,
+                o.promised_delivery_date
+            FROM orders o
+            WHERE o.order_date BETWEEN :startDate AND :endDate
+            AND o.delivery_date IS NOT NULL
+            AND (CAST(:carriers AS text[]) IS NULL OR o.carrier = ANY(CAST(:carriers AS text[])))
+            AND (CAST(:regions AS text[]) IS NULL OR o.region = ANY(CAST(:regions AS text[])))
+            AND (CAST(:categories AS text[]) IS NULL OR o.product_category = ANY(CAST(:categories AS text[])))
+        ) sub
+        GROUP BY period
+        ORDER BY period
+        """, nativeQuery = true)
+    List<Object[]> getHistoricalMetricByPeriod(@Param("metricType") String metricType,
+                                                @Param("granularity") String granularity,
+                                                @Param("startDate") LocalDate startDate,
+                                                @Param("endDate") LocalDate endDate,
+                                                @Param("carriers") String[] carriers,
+                                                @Param("regions") String[] regions,
+                                                @Param("categories") String[] categories);
 }

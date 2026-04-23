@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS orders (
     client_id VARCHAR(20),
     order_id VARCHAR(50) UNIQUE,
     order_date DATE NOT NULL,
+    promised_delivery_date DATE NOT NULL,
     delivery_date DATE,
     carrier VARCHAR(50),
     origin_city VARCHAR(100),

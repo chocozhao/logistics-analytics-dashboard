@@ -149,16 +149,92 @@ public class DashboardService {
                     Long totalOrders   = ((Number) row[1]).longValue();
                     Long delayedOrders = ((Number) row[2]).longValue();
                     BigDecimal delayRate = BigDecimal.ZERO;
+                    BigDecimal onTimeRate = BigDecimal.ZERO;
                     if (totalOrders > 0) {
                         delayRate = BigDecimal.valueOf(delayedOrders)
                                 .multiply(BigDecimal.valueOf(100))
                                 .divide(BigDecimal.valueOf(totalOrders), 2, RoundingMode.HALF_UP);
+                        onTimeRate = BigDecimal.valueOf(100).subtract(delayRate);
                     }
-                    return new CarrierBreakdown(carrier, totalOrders, delayedOrders, delayRate);
+                    return new CarrierBreakdown(carrier, totalOrders, delayedOrders, delayRate, onTimeRate);
                 })
                 .collect(Collectors.toList());
 
         return new CarrierBreakdownResponse(data);
+    }
+
+    public RegionBreakdownResponse getRegionBreakdown(LocalDate startDate, LocalDate endDate,
+                                                      List<String> carriers, List<String> regions) {
+        return getRegionBreakdown(startDate, endDate, carriers, regions, null);
+    }
+
+    public RegionBreakdownResponse getRegionBreakdown(LocalDate startDate, LocalDate endDate,
+                                                      List<String> carriers, List<String> regions,
+                                                      List<String> categories) {
+        log.info("Fetching region breakdown {} to {}", startDate, endDate);
+
+        List<String> c = (carriers != null && !carriers.isEmpty()) ? carriers : null;
+        List<String> r = (regions != null && !regions.isEmpty()) ? regions : null;
+        List<String> cat = (categories != null && !categories.isEmpty()) ? categories : null;
+
+        List<Object[]> results = orderRepository.getRegionBreakdownWithFilters(
+                startDate, endDate, toArray(c), toArray(r), toArray(cat));
+
+        List<RegionBreakdown> data = results.stream()
+                .map(row -> {
+                    String region = (String) row[0];
+                    Long totalOrders   = ((Number) row[1]).longValue();
+                    Long delayedOrders = ((Number) row[2]).longValue();
+                    BigDecimal delayRate = BigDecimal.ZERO;
+                    BigDecimal onTimeRate = BigDecimal.ZERO;
+                    if (totalOrders > 0) {
+                        delayRate = BigDecimal.valueOf(delayedOrders)
+                                .multiply(BigDecimal.valueOf(100))
+                                .divide(BigDecimal.valueOf(totalOrders), 2, RoundingMode.HALF_UP);
+                        onTimeRate = BigDecimal.valueOf(100).subtract(delayRate);
+                    }
+                    return new RegionBreakdown(region, totalOrders, delayedOrders, delayRate, onTimeRate);
+                })
+                .collect(Collectors.toList());
+
+        return new RegionBreakdownResponse(data);
+    }
+
+    public CategoryBreakdownResponse getCategoryBreakdown(LocalDate startDate, LocalDate endDate,
+                                                           List<String> carriers, List<String> regions) {
+        return getCategoryBreakdown(startDate, endDate, carriers, regions, null);
+    }
+
+    public CategoryBreakdownResponse getCategoryBreakdown(LocalDate startDate, LocalDate endDate,
+                                                           List<String> carriers, List<String> regions,
+                                                           List<String> categories) {
+        log.info("Fetching category breakdown {} to {}", startDate, endDate);
+
+        List<String> c = (carriers != null && !carriers.isEmpty()) ? carriers : null;
+        List<String> r = (regions != null && !regions.isEmpty()) ? regions : null;
+        List<String> cat = (categories != null && !categories.isEmpty()) ? categories : null;
+
+        List<Object[]> results = orderRepository.getCategoryBreakdownWithFilters(
+                startDate, endDate, toArray(c), toArray(r), toArray(cat));
+
+        List<CategoryBreakdown> data = results.stream()
+                .map(row -> {
+                    String category = (String) row[0];
+                    Long totalOrders   = ((Number) row[1]).longValue();
+                    Long delayedOrders = ((Number) row[2]).longValue();
+                    BigDecimal delayRate = BigDecimal.ZERO;
+                    BigDecimal onTimeRate = BigDecimal.ZERO;
+                    if (totalOrders > 0) {
+                        delayRate = BigDecimal.valueOf(delayedOrders)
+                                .multiply(BigDecimal.valueOf(100))
+                                .divide(BigDecimal.valueOf(totalOrders), 2, RoundingMode.HALF_UP);
+                        onTimeRate = BigDecimal.valueOf(100).subtract(delayRate);
+                    }
+                    return new CategoryBreakdown(category, totalOrders, delayedOrders, delayRate, onTimeRate);
+                })
+                .collect(Collectors.toList());
+
+        return new CategoryBreakdownResponse(data);
     }
 
     private LocalDate toLocalDate(Object obj) {

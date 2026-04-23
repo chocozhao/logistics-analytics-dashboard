@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { useDashboardStore } from '../stores/dashboard'
 
@@ -63,10 +63,10 @@ const renderChart = () => {
   }
 }
 
-onMounted(() => renderChart())
+onMounted(() => nextTick(renderChart))
 onBeforeUnmount(() => destroyChart())
 
-watch(() => dashboardStore.orderVolumeData, () => renderChart(), { deep: true })
+watch(() => dashboardStore.orderVolumeData, () => nextTick(renderChart), { deep: true, flush: 'post' })
 </script>
 
 <template>

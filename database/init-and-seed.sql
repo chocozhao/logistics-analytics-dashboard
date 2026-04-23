@@ -4,10 +4,11 @@
 
 -- 1. Create orders table
 CREATE TABLE IF NOT EXISTS orders (
-    id SERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     client_id VARCHAR(20),
     order_id VARCHAR(50) UNIQUE,
     order_date DATE NOT NULL,
+    promised_delivery_date DATE NOT NULL,
     delivery_date DATE,
     carrier VARCHAR(50),
     origin_city VARCHAR(100),
@@ -26,6 +27,8 @@ CREATE TABLE IF NOT EXISTS orders (
 
 -- 2. Indexes
 CREATE INDEX IF NOT EXISTS idx_order_date ON orders(order_date);
+CREATE INDEX IF NOT EXISTS idx_promised_delivery_date ON orders(promised_delivery_date);
+CREATE INDEX IF NOT EXISTS idx_delivery_date ON orders(delivery_date);
 CREATE INDEX IF NOT EXISTS idx_carrier ON orders(carrier);
 CREATE INDEX IF NOT EXISTS idx_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_region ON orders(region);
@@ -63,6 +66,7 @@ DECLARE
     category TEXT;
     status_val TEXT;
     order_dt DATE;
+    promised_dt DATE;
     delivery_dt DATE;
     delivery_days INTEGER;
     is_promo_val BOOLEAN;
@@ -118,6 +122,9 @@ BEGIN
         -- Order date: random within 2025
         order_dt := '2025-01-01'::DATE + (random() * 364)::INTEGER;
 
+        -- Promised delivery: 3-5 days after order
+        promised_dt := order_dt + (3 + (random() * 2)::INTEGER);
+
         -- Status (weighted)
         status_val := status_weights[1 + (random() * 10)::INTEGER];
 
@@ -135,7 +142,7 @@ BEGIN
             delivery_dt := NULL;  -- in_transit or canceled
         END IF;
 
-        -- Don't let future delivery dates exceed today's context (2025)
+        -- Don't let future delivery dates exceed year's end
         IF delivery_dt > '2025-12-31'::DATE THEN
             IF status_val = 'delivered' THEN
                 status_val := 'in_transit';
@@ -177,7 +184,7 @@ BEGIN
         order_id_val := 'ORD-2026-' || LPAD((100000 + (random()*899999)::INTEGER)::TEXT, 6, '0') || '-' || LPAD(seq::TEXT, 4, '0');
 
         INSERT INTO orders (
-            client_id, order_id, order_date, delivery_date,
+            client_id, order_id, order_date, promised_delivery_date, delivery_date,
             carrier, origin_city, destination_city,
             status, sku, product_category,
             quantity, unit_price_usd, order_value_usd,
@@ -187,6 +194,7 @@ BEGIN
             client_id_val,
             order_id_val,
             order_dt,
+            promised_dt,
             delivery_dt,
             carrier,
             origin_city,

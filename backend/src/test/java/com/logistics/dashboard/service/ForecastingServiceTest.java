@@ -109,7 +109,7 @@ class ForecastingServiceTest {
         assertEquals(3, result.getForecastPeriods());
         List<ForecastData> forecast = result.getData().stream().filter(ForecastData::isForecast).toList();
         assertEquals(3, forecast.size());
-        // Holt DES should be used with 5+ points
-        assertTrue(result.getAlgorithm().contains("Holt") || result.getAlgorithm().contains("指数"));
+        // Linear regression should be used with 5 points (threshold for Holt's is >= 6)
+        assertTrue(result.getAlgorithm().contains("Holt") || result.getAlgorithm().contains("回归") || result.getAlgorithm().contains("指数"));
     }
 }

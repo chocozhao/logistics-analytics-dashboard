@@ -40,7 +40,7 @@ public class NLUOrchestrator {
     private static final Set<String> VALID_CATEGORIES = Set.of(
             "BOOK","PAPER","PENCIL","CRAYON","MARKER","BRUSH","PAINT","STICKER");
     private static final Set<String> VALID_TOOLS     = Set.of(
-            "getKpi","getTimeSeries","getBreakdown","getDeliveryPerformance","forecastDemand");
+            "getKpi","getTimeSeries","getBreakdown","getDeliveryPerformance","forecastDemand","forecastMetric","fallback");
     private static final Set<String> VALID_GRAN      = Set.of("day","week","month");
 
     private static final LocalDate DATA_START = LocalDate.of(2025, 1, 1);
@@ -56,9 +56,9 @@ public class NLUOrchestrator {
 You are a logistics analytics assistant. Your job is to interpret the user's question about freight/order data and output a SINGLE JSON object describing which analysis tool to call.
 
 DATABASE SCHEMA (table: orders):
-- order_date DATE, delivery_date DATE (NULL if not yet delivered)
+- order_date DATE, promised_delivery_date DATE, delivery_date DATE (NULL if not yet delivered)
 - status: 'delivered' | 'delayed' | 'in_transit' | 'exception' | 'canceled'
-  NOTE: 'delayed' is a status value, not computed from dates.
+  NOTE: An order is considered DELAYED when delivery_date > promised_delivery_date (computed from dates, not just status).
 - carrier: UPS, FedEx, DHL, USPS, LaserShip, OnTrac, DPD, GLS, Royal Mail
 - region: US-W, US-C, US-E, EU, UK
 - product_category: BOOK, PAPER, PENCIL, CRAYON, MARKER, BRUSH, PAINT, STICKER
@@ -70,9 +70,11 @@ DATA DATE RANGE: 2025-01-01 to 2025-12-31
 TOOLS:
 1. getKpi       - Returns: totalOrders, deliveredOrders, delayedOrders, onTimeRate, avgDeliveryDays
 2. getTimeSeries - Returns: time-bucketed order counts. Params: granularity (day/week/month)
-3. getBreakdown  - Returns: carrier breakdown (total_orders, delayed_orders, delay_rate). Params: dimension=carrier
+3. getBreakdown  - Returns: carrier/region/category breakdown (total_orders, delayed_orders, delay_rate, on_time_rate). Params: dimension=carrier|region|category
 4. getDeliveryPerformance - Returns: on-time vs delayed counts per time period. Params: granularity
 5. forecastDemand - Returns: historical + forecasted order counts. Params: periods (int), granularity
+6. forecastMetric - Returns: historical + forecasted on-time rate or delay rate (%). Params: metricType ('on_time_rate'|'delay_rate'), periods, granularity
+7. fallback      - Use this when the question is NOT about logistics analytics (e.g., "who are you?", "what's the weather?", "hello").
 
 PARAMETER EXTRACTION RULES:
 - Extract year/month/quarter from question → convert to startDate/endDate (YYYY-MM-DD)
@@ -109,8 +111,17 @@ A: {"tool":"getTimeSeries","params":{"startDate":"2025-01-01","endDate":"2025-12
 Q: "Which carrier has the highest delay rate?"
 A: {"tool":"getBreakdown","params":{"startDate":"2025-01-01","endDate":"2025-12-31","dimension":"carrier","carriers":[],"regions":[],"categories":[]},"answerTemplate":"各承运商延误率对比"}
 
+Q: "哪个地区的订单延误最多？"
+A: {"tool":"getBreakdown","params":{"startDate":"2025-01-01","endDate":"2025-12-31","dimension":"region","carriers":[],"regions":[],"categories":[]},"answerTemplate":"各地区延误订单对比"}
+
 Q: "Forecast next 4 weeks of orders"
 A: {"tool":"forecastDemand","params":{"startDate":"2025-01-01","endDate":"2025-12-31","granularity":"week","periods":4,"carriers":[],"regions":[],"categories":[]},"answerTemplate":"未来4周订单量预测"}
+
+Q: "预测未来4周US-W的准时率"
+A: {"tool":"forecastMetric","params":{"metricType":"on_time_rate","startDate":"2025-01-01","endDate":"2025-12-31","granularity":"week","periods":4,"carriers":[],"regions":["US-W"],"categories":[]},"answerTemplate":"US-W地区未来4周准时率预测"}
+
+Q: "你是谁"
+A: {"tool":"fallback","params":{"startDate":"2025-01-01","endDate":"2025-12-31"},"answerTemplate":"问题与物流分析无关"}
 
 Output ONLY the JSON object, nothing else.
 """;
@@ -232,6 +243,7 @@ Output ONLY the JSON object, nothing else.
             if (p.has("granularity")) plan.params.put("granularity", p.get("granularity").asText());
             if (p.has("periods"))     plan.params.put("periods", p.get("periods").asInt(4));
             if (p.has("dimension"))   plan.params.put("dimension", p.get("dimension").asText("carrier"));
+            if (p.has("metricType"))  plan.params.put("metricType", p.get("metricType").asText("on_time_rate"));
 
             // Validated list params
             plan.params.put("carriers",   parseAndValidateList(p.path("carriers"),   VALID_CARRIERS));
@@ -260,10 +272,34 @@ Output ONLY the JSON object, nothing else.
 
     // ── Keyword-based heuristic fallback ──────────────────────────────────────
 
+    private static final Set<String> BUSINESS_KEYWORDS = Set.of(
+        "order","orders","订单","delivery","deliveries","shipment","shipments","运输","物流","货运","包裹","package",
+        "count","volume","数量","trend","trends","趋势","compare","comparison","对比","analysis","analyze","分析",
+        "performance","绩效","forecast","预测","predict","kpi","kpis","metric","metrics","指标",
+        "carrier","carriers","承运商","region","regions","地区","category","categories","品类","product","产品",
+        "delay","delayed","delays","延误","on-time","ontime","准时","rate","rates","率",
+        "2025","year","年","month","月","week","周","day","日","quarter","季度","q1","q2","q3","q4",
+        "ups","fedex","dhl","usps","total","average","avg","sum","max","min","最高","最低","平均","总和","多少","几个"
+    );
+
+    private static final Set<String> CHAT_KEYWORDS = Set.of(
+        "你","who","hello","hi","hey","谢谢","thanks","thank","天气","weather","新闻","news",
+        "电影","movie","吃","eat","名字","name","喜欢","like","love","讨厌","hate","再见","bye"
+    );
+
     private ToolPlan heuristicPlan(String question, QueryRequest request) {
         String q = question.toLowerCase();
         ToolPlan plan = new ToolPlan();
         plan.params = new HashMap<>();
+
+        // Irrelevance detection: no business keywords + has chat keywords
+        boolean hasBusiness = BUSINESS_KEYWORDS.stream().anyMatch(q::contains);
+        boolean hasChat     = CHAT_KEYWORDS.stream().anyMatch(q::contains);
+        if (!hasBusiness && hasChat) {
+            plan.tool = "fallback";
+            plan.answerTemplate = "问题与物流分析无关";
+            return plan;
+        }
 
         // Date range
         LocalDate[] range = extractDateRange(q, request);
@@ -288,12 +324,56 @@ Output ONLY the JSON object, nothing else.
                 .collect(Collectors.toList());
         plan.params.put("categories", cats);
 
+        // Forecast metric detection (must come before general on-time rate routing)
+        boolean isForecast = q.contains("预测") || q.contains("forecast") || q.contains("predict") || q.contains("未来");
+        if (isForecast && (q.contains("准时率") || q.contains("on-time rate") || q.contains("延误率") || q.contains("delay rate"))) {
+            plan.tool = "forecastMetric";
+            plan.params.put("metricType", q.contains("延误") || q.contains("delay") ? "delay_rate" : "on_time_rate");
+            plan.params.put("granularity", "week");
+            plan.params.put("periods", 4);
+            plan.answerTemplate = "准时率/延误率预测";
+            return plan;
+        }
+
+        // On-time rate specific routing
+        if (q.contains("准时率") || q.contains("on-time rate")) {
+            if (q.contains("哪个") || q.contains("最")) {
+                // Comparison question
+                if (q.contains("地区") || q.contains("region")) {
+                    plan.tool = "getBreakdown";
+                    plan.params.put("dimension", "region");
+                    plan.answerTemplate = "各地区准时率对比";
+                } else if (q.contains("品类") || q.contains("category")) {
+                    plan.tool = "getBreakdown";
+                    plan.params.put("dimension", "category");
+                    plan.answerTemplate = "各品类准时率对比";
+                } else {
+                    plan.tool = "getBreakdown";
+                    plan.params.put("dimension", "carrier");
+                    plan.answerTemplate = "各承运商准时率对比";
+                }
+            } else {
+                // Specific on-time rate query → KPI
+                plan.tool = "getKpi";
+                plan.answerTemplate = "准时率分析";
+            }
+            return plan;
+        }
+
         // Tool selection
-        if (q.contains("预测") || q.contains("forecast") || q.contains("predict") || q.contains("未来")) {
+        if (isForecast) {
             plan.tool = "forecastDemand";
             plan.params.put("granularity", "week");
             plan.params.put("periods", 4);
             plan.answerTemplate = "订单量预测";
+        } else if (q.contains("地区") || q.contains("region") || q.contains("区域")) {
+            plan.tool = "getBreakdown";
+            plan.params.put("dimension", "region");
+            plan.answerTemplate = "地区分析";
+        } else if (q.contains("品类") || q.contains("category") || q.contains("产品类别") || q.contains("商品类别")) {
+            plan.tool = "getBreakdown";
+            plan.params.put("dimension", "category");
+            plan.answerTemplate = "品类分析";
         } else if (q.contains("承运商") || q.contains("carrier") || q.contains("快递公司") || q.contains("哪家")) {
             plan.tool = "getBreakdown";
             plan.params.put("dimension", "carrier");
@@ -368,7 +448,7 @@ Output ONLY the JSON object, nothing else.
                 KpiResponse kpi = dashboardService.getKPIs(startDate, endDate, carriers, regions, categories);
                 response.setChartType("kpi");
                 response.setAnswer(formatKpiAnswer(kpi, plan.answerTemplate, carriers, regions, startDate, endDate));
-                response.setExplanation("从数据库实时聚合 — status='delayed' 计为延误，status='delivered' 计为已送达。");
+                response.setExplanation("从数据库实时聚合 — delivery_date > promised_delivery_date 计为延误。");
                 response.setMetrics(List.of("totalOrders", "deliveredOrders", "delayedOrders", "onTimeRate", "avgDeliveryDays"));
 
                 Map<String, Object> chartData = new LinkedHashMap<>();
@@ -415,31 +495,110 @@ Output ONLY the JSON object, nothing else.
             }
 
             case "getBreakdown" -> {
-                CarrierBreakdownResponse bd = dashboardService.getCarrierBreakdown(startDate, endDate, carriers, regions, categories);
-                response.setChartType("bar");
-                response.setAnswer("各承运商绩效分析（" + startDate + " 至 " + endDate + "）");
-                response.setExplanation("按承运商汇总订单量和延误率，status='delayed' 计为延误。");
-                response.setMetrics(List.of("总订单", "延误订单", "延误率"));
+                String dimension = plan.params.getOrDefault("dimension", "carrier").toString();
+                if ("region".equalsIgnoreCase(dimension)) {
+                    RegionBreakdownResponse rb = dashboardService.getRegionBreakdown(startDate, endDate, carriers, regions, categories);
+                    response.setChartType("bar");
+                    String bestRegion = rb.getData().stream()
+                            .max(java.util.Comparator.comparing(RegionBreakdown::getOnTimeRate))
+                            .map(RegionBreakdown::getRegion).orElse("");
+                    String answerPrefix = plan.answerTemplate.contains("准时率")
+                            ? "各地区准时率分析（准时率最高：" + bestRegion + "）"
+                            : "各地区绩效分析";
+                    response.setAnswer(answerPrefix + "（" + startDate + " 至 " + endDate + "）");
+                    response.setExplanation("按地区汇总订单量和延误率，delivery_date > promised_delivery_date 计为延误。准时率 = 100% - 延误率。");
+                    response.setMetrics(List.of("总订单", "延误订单", "延误率", "准时率"));
 
-                List<String> labels = bd.getData().stream().map(CarrierBreakdown::getCarrier).collect(Collectors.toList());
-                List<Long>   values = bd.getData().stream().map(CarrierBreakdown::getTotalOrders).collect(Collectors.toList());
-                Map<String, Object> chartData = new LinkedHashMap<>();
-                chartData.put("chartType", "bar");
-                chartData.put("labels", labels);
-                chartData.put("values", values);
-                chartData.put("delayedValues", bd.getData().stream().map(CarrierBreakdown::getDelayedOrders).collect(Collectors.toList()));
-                chartData.put("delayRates",    bd.getData().stream().map(c -> c.getDelayRate().toString()).collect(Collectors.toList()));
-                response.setChartData(chartData);
+                    List<String> labels = rb.getData().stream().map(RegionBreakdown::getRegion).collect(Collectors.toList());
+                    List<Long>   values = rb.getData().stream().map(RegionBreakdown::getTotalOrders).collect(Collectors.toList());
+                    Map<String, Object> chartData = new LinkedHashMap<>();
+                    chartData.put("chartType", "bar");
+                    chartData.put("dimension", "region");
+                    chartData.put("labels", labels);
+                    chartData.put("values", values);
+                    chartData.put("delayedValues", rb.getData().stream().map(RegionBreakdown::getDelayedOrders).collect(Collectors.toList()));
+                    chartData.put("delayRates",    rb.getData().stream().map(r -> r.getDelayRate().toString()).collect(Collectors.toList()));
+                    chartData.put("onTimeRates",   rb.getData().stream().map(r -> r.getOnTimeRate().toString()).collect(Collectors.toList()));
+                    response.setChartData(chartData);
 
-                List<Map<String, Object>> raw = bd.getData().stream()
-                        .map(c -> Map.<String,Object>of(
-                                "carrier",      c.getCarrier(),
-                                "totalOrders",  c.getTotalOrders(),
-                                "delayedOrders", c.getDelayedOrders(),
-                                "delayRate",    c.getDelayRate() + "%"
-                        ))
-                        .collect(Collectors.toList());
-                response.setRawData(raw);
+                    List<Map<String, Object>> raw = rb.getData().stream()
+                            .map(r -> Map.<String,Object>of(
+                                    "region",       r.getRegion(),
+                                    "totalOrders",  r.getTotalOrders(),
+                                    "delayedOrders", r.getDelayedOrders(),
+                                    "delayRate",    r.getDelayRate() + "%"
+                            ))
+                            .collect(Collectors.toList());
+                    response.setRawData(raw);
+                } else if ("category".equalsIgnoreCase(dimension)) {
+                    CategoryBreakdownResponse cb = dashboardService.getCategoryBreakdown(startDate, endDate, carriers, regions, categories);
+                    response.setChartType("bar");
+                    String bestCategory = cb.getData().stream()
+                            .max(java.util.Comparator.comparing(CategoryBreakdown::getOnTimeRate))
+                            .map(CategoryBreakdown::getCategory).orElse("");
+                    String answerPrefix = plan.answerTemplate.contains("准时率")
+                            ? "各品类准时率分析（准时率最高：" + bestCategory + "）"
+                            : "各品类绩效分析";
+                    response.setAnswer(answerPrefix + "（" + startDate + " 至 " + endDate + "）");
+                    response.setExplanation("按品类汇总订单量和延误率，delivery_date > promised_delivery_date 计为延误。准时率 = 100% - 延误率。");
+                    response.setMetrics(List.of("总订单", "延误订单", "延误率", "准时率"));
+
+                    List<String> labels = cb.getData().stream().map(CategoryBreakdown::getCategory).collect(Collectors.toList());
+                    List<Long>   values = cb.getData().stream().map(CategoryBreakdown::getTotalOrders).collect(Collectors.toList());
+                    Map<String, Object> chartData = new LinkedHashMap<>();
+                    chartData.put("chartType", "bar");
+                    chartData.put("dimension", "category");
+                    chartData.put("labels", labels);
+                    chartData.put("values", values);
+                    chartData.put("delayedValues", cb.getData().stream().map(CategoryBreakdown::getDelayedOrders).collect(Collectors.toList()));
+                    chartData.put("delayRates",    cb.getData().stream().map(c -> c.getDelayRate().toString()).collect(Collectors.toList()));
+                    chartData.put("onTimeRates",   cb.getData().stream().map(c -> c.getOnTimeRate().toString()).collect(Collectors.toList()));
+                    response.setChartData(chartData);
+
+                    List<Map<String, Object>> raw = cb.getData().stream()
+                            .map(c -> Map.<String,Object>of(
+                                    "category",      c.getCategory(),
+                                    "totalOrders",  c.getTotalOrders(),
+                                    "delayedOrders", c.getDelayedOrders(),
+                                    "delayRate",    c.getDelayRate() + "%"
+                            ))
+                            .collect(Collectors.toList());
+                    response.setRawData(raw);
+                } else {
+                    CarrierBreakdownResponse bd = dashboardService.getCarrierBreakdown(startDate, endDate, carriers, regions, categories);
+                    response.setChartType("bar");
+                    String bestCarrier = bd.getData().stream()
+                            .max(java.util.Comparator.comparing(CarrierBreakdown::getOnTimeRate))
+                            .map(CarrierBreakdown::getCarrier).orElse("");
+                    String answerPrefix = plan.answerTemplate.contains("准时率")
+                            ? "各承运商准时率分析（准时率最高：" + bestCarrier + "）"
+                            : "各承运商绩效分析";
+                    response.setAnswer(answerPrefix + "（" + startDate + " 至 " + endDate + "）");
+                    response.setExplanation("按承运商汇总订单量和延误率，delivery_date > promised_delivery_date 计为延误。准时率 = 100% - 延误率。");
+                    response.setMetrics(List.of("总订单", "延误订单", "延误率", "准时率"));
+
+                    List<String> labels = bd.getData().stream().map(CarrierBreakdown::getCarrier).collect(Collectors.toList());
+                    List<Long>   values = bd.getData().stream().map(CarrierBreakdown::getTotalOrders).collect(Collectors.toList());
+                    Map<String, Object> chartData = new LinkedHashMap<>();
+                    chartData.put("chartType", "bar");
+                    chartData.put("dimension", "carrier");
+                    chartData.put("labels", labels);
+                    chartData.put("values", values);
+                    chartData.put("delayedValues", bd.getData().stream().map(CarrierBreakdown::getDelayedOrders).collect(Collectors.toList()));
+                    chartData.put("delayRates",    bd.getData().stream().map(c -> c.getDelayRate().toString()).collect(Collectors.toList()));
+                    chartData.put("onTimeRates",   bd.getData().stream().map(c -> c.getOnTimeRate().toString()).collect(Collectors.toList()));
+                    response.setChartData(chartData);
+
+                    List<Map<String, Object>> raw = bd.getData().stream()
+                            .map(c -> Map.<String,Object>of(
+                                    "carrier",      c.getCarrier(),
+                                    "totalOrders",  c.getTotalOrders(),
+                                    "delayedOrders", c.getDelayedOrders(),
+                                    "delayRate",    c.getDelayRate() + "%"
+                            ))
+                            .collect(Collectors.toList());
+                    response.setRawData(raw);
+                }
             }
 
             case "getDeliveryPerformance" -> {
@@ -448,7 +607,7 @@ Output ONLY the JSON object, nothing else.
                 DeliveryPerformanceResponse dp = dashboardService.getDeliveryPerformance(gran, startDate, endDate, carriers, regions, categories);
                 response.setChartType("bar");
                 response.setAnswer("交付性能分析（" + startDate + " 至 " + endDate + "）");
-                response.setExplanation("按时间段展示准时 vs 延误订单数，直接来自 status 字段统计。");
+                response.setExplanation("按时间段展示准时 vs 延误订单数，延误判定为 delivery_date > promised_delivery_date。");
                 response.setMetrics(List.of("准时订单", "延误订单"));
 
                 List<String> labels = dp.getData().stream().map(DeliveryPerformance::getPeriod).collect(Collectors.toList());
@@ -505,6 +664,52 @@ Output ONLY the JSON object, nothing else.
                         ))
                         .collect(Collectors.toList());
                 response.setRawData(raw);
+            }
+
+            case "forecastMetric" -> {
+                String gran = plan.params.getOrDefault("granularity", "week").toString();
+                if (!VALID_GRAN.contains(gran)) gran = "week";
+                int periods = Integer.parseInt(plan.params.getOrDefault("periods", 4).toString());
+                String metricType = plan.params.getOrDefault("metricType", "on_time_rate").toString();
+                ForecastResponse fc = forecastingService.forecastMetric(metricType, gran, periods, startDate, endDate, carriers, regions, categories);
+                String metricLabel = "on_time_rate".equals(metricType) ? "准时率" : "延误率";
+                response.setChartType("forecast");
+                response.setAnswer("未来 " + periods + " 个" + granLabel(gran) + metricLabel + "预测");
+                response.setExplanation("使用 " + fc.getAlgorithm() + " 基于历史交付数据确定性计算。AI 仅负责参数提取，不生成预测值。");
+                response.setMetrics(List.of("历史" + metricLabel, "预测" + metricLabel));
+
+                List<String> labels    = fc.getData().stream().map(d -> d.getDate().toString()).collect(Collectors.toList());
+                List<String> histVals  = fc.getData().stream().filter(d -> !d.isForecast()).map(d -> d.getPctValue().toString()).collect(Collectors.toList());
+                List<String> foreVals  = fc.getData().stream().filter(ForecastData::isForecast).map(d -> d.getPctValue().toString()).collect(Collectors.toList());
+                int splitIdx = (int) fc.getData().stream().filter(d -> !d.isForecast()).count();
+                Map<String, Object> chartData = new LinkedHashMap<>();
+                chartData.put("chartType", "forecast");
+                chartData.put("metricType", metricType);
+                chartData.put("labels", labels);
+                chartData.put("historicalValues", histVals);
+                chartData.put("forecastValues",   foreVals);
+                chartData.put("splitIndex", splitIdx);
+                chartData.put("algorithm",  fc.getAlgorithm());
+                chartData.put("recommendations", fc.getRecommendations());
+                response.setChartData(chartData);
+
+                List<Map<String, Object>> raw = fc.getData().stream()
+                        .map(d -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("date",       d.getDate().toString());
+                            row.put("value",      d.getPctValue() != null ? d.getPctValue().toString() + "%" : d.getValue());
+                            row.put("isForecast", d.isForecast());
+                            return row;
+                        })
+                        .collect(Collectors.toList());
+                response.setRawData(raw);
+            }
+
+            case "fallback" -> {
+                response.setChartType("none");
+                response.setAnswer("我是物流数据分析助手，专注于帮助您分析订单、承运商、地区配送绩效等指标。\n\n您可以尝试提问：\n- 2025年各承运商延误率对比\n- 预测未来4周US-W的准时率\n- 哪个品类的订单延误最多？");
+                response.setExplanation("该问题与物流分析无关，未触发任何数据查询工具。");
+                response.setMetrics(List.of("N/A"));
             }
 
             default -> {

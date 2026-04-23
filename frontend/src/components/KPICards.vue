@@ -29,7 +29,7 @@ const kpiCards = computed(() => [
     icon: 'Clock',
     color: '#e6a23c',
     trend: null,
-    description: 'status 为 delayed 的订单'
+    description: '实际交货日晚于承诺交货日'
   },
   {
     title: '准时率',

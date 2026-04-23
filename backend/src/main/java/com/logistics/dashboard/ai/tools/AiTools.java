@@ -40,23 +40,23 @@ public class AiTools {
     /**
      * Get breakdown of data by categorical dimension (carrier, region, etc.)
      */
-    @Tool("Get aggregated values by categorical dimension like carrier, region, or status. " +
+    @Tool("Get aggregated values by categorical dimension like carrier, region, or category. " +
           "Use this when the user asks for comparison, breakdown, or distribution. " +
-          "Examples: 'Compare carriers by delay rate', 'Show orders by region', 'Which carrier has most delays?'")
-    public CarrierBreakdownResponse getBreakdown(
-            @P("The dimension to breakdown by: 'carrier' or 'region'") String dimension,
+          "Examples: 'Compare carriers by delay rate', 'Show orders by region', 'Which carrier has most delays?', 'Which region has the most delays?', 'Which product category has the most delays?'")
+    public Object getBreakdown(
+            @P("The dimension to breakdown by: 'carrier', 'region', or 'category'") String dimension,
             @P("Start date in YYYY-MM-DD format") LocalDate startDate,
             @P("End date in YYYY-MM-DD format") LocalDate endDate,
             @P("Optional list of carriers to filter by") List<String> carriers,
-            @P("Optional list of regions to filter by") List<String> regions) {
+            @P("Optional list of regions to filter by") List<String> regions,
+            @P("Optional list of product categories to filter by") List<String> categories) {
 
-        // For now, we only support carrier breakdown
-        if ("carrier".equalsIgnoreCase(dimension)) {
-            return dashboardService.getCarrierBreakdown(startDate, endDate, carriers, regions);
+        if ("region".equalsIgnoreCase(dimension)) {
+            return dashboardService.getRegionBreakdown(startDate, endDate, carriers, regions, categories);
+        } else if ("category".equalsIgnoreCase(dimension)) {
+            return dashboardService.getCategoryBreakdown(startDate, endDate, carriers, regions, categories);
         } else {
-            // For region breakdown, we'd need to implement a new method
-            // For now, return carrier breakdown as fallback
-            return dashboardService.getCarrierBreakdown(startDate, endDate, carriers, regions);
+            return dashboardService.getCarrierBreakdown(startDate, endDate, carriers, regions, categories);
         }
     }
 
@@ -95,7 +95,7 @@ public class AiTools {
      * Forecast future demand
      */
     @Tool("Forecast future order volume based on historical data. " +
-          "Use this when the user asks for predictions, forecasts, or future trends. " +
+          "Use this when the user asks for predictions, forecasts, or future trends of ORDER VOLUME. " +
           "Examples: 'Predict orders for next month', 'Forecast demand for Q3', 'What will order volume be next week?'")
     public ForecastResponse forecastDemand(
             @P("Number of periods to forecast") int periods,
@@ -106,5 +106,24 @@ public class AiTools {
             @P("Optional list of regions to filter by") List<String> regions) {
 
         return forecastingService.forecastDemand(granularity, periods, startDate, endDate, carriers, regions);
+    }
+
+    /**
+     * Forecast future on-time rate or delay rate
+     */
+    @Tool("Forecast future on-time rate or delay rate based on historical delivery performance. " +
+          "Use this when the user asks to predict delivery performance metrics like on-time rate or delay rate. " +
+          "Examples: '预测未来4周US-W的准时率', 'Forecast delay rate for next month', 'What will the on-time rate be next week?'")
+    public ForecastResponse forecastMetric(
+            @P("The metric to forecast: 'on_time_rate' or 'delay_rate'") String metricType,
+            @P("Number of periods to forecast") int periods,
+            @P("The time granularity: 'day', 'week', or 'month'") String granularity,
+            @P("Start date in YYYY-MM-DD format") LocalDate startDate,
+            @P("End date in YYYY-MM-DD format") LocalDate endDate,
+            @P("Optional list of carriers to filter by") List<String> carriers,
+            @P("Optional list of regions to filter by") List<String> regions,
+            @P("Optional list of product categories to filter by") List<String> categories) {
+
+        return forecastingService.forecastMetric(metricType, granularity, periods, startDate, endDate, carriers, regions, categories);
     }
 }

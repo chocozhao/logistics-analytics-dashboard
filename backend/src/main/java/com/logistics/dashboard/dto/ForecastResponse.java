@@ -10,18 +10,26 @@ public class ForecastResponse {
     private BigDecimal safetyStockMultiplier;
     private List<ForecastData> data;
     private String recommendations;
+    private String metricType; // null = order volume, "on_time_rate", "delay_rate"
 
     public ForecastResponse() {
     }
 
     public ForecastResponse(String granularity, int forecastPeriods, String algorithm,
                            BigDecimal safetyStockMultiplier, List<ForecastData> data, String recommendations) {
+        this(granularity, forecastPeriods, algorithm, safetyStockMultiplier, data, recommendations, null);
+    }
+
+    public ForecastResponse(String granularity, int forecastPeriods, String algorithm,
+                           BigDecimal safetyStockMultiplier, List<ForecastData> data,
+                           String recommendations, String metricType) {
         this.granularity = granularity;
         this.forecastPeriods = forecastPeriods;
         this.algorithm = algorithm;
         this.safetyStockMultiplier = safetyStockMultiplier;
         this.data = data;
         this.recommendations = recommendations;
+        this.metricType = metricType;
     }
 
     public String getGranularity() {
@@ -70,5 +78,13 @@ public class ForecastResponse {
 
     public void setRecommendations(String recommendations) {
         this.recommendations = recommendations;
+    }
+
+    public String getMetricType() {
+        return metricType;
+    }
+
+    public void setMetricType(String metricType) {
+        this.metricType = metricType;
     }
 }

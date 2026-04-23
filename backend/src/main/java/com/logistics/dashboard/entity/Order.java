@@ -21,6 +21,9 @@ public class Order {
     @Column(name = "order_date", nullable = false)
     private LocalDate orderDate;
 
+    @Column(name = "promised_delivery_date", nullable = false)
+    private LocalDate promisedDeliveryDate;
+
     @Column(name = "delivery_date")
     private LocalDate deliveryDate;
 
@@ -81,6 +84,9 @@ public class Order {
 
     public LocalDate getOrderDate() { return orderDate; }
     public void setOrderDate(LocalDate orderDate) { this.orderDate = orderDate; }
+
+    public LocalDate getPromisedDeliveryDate() { return promisedDeliveryDate; }
+    public void setPromisedDeliveryDate(LocalDate promisedDeliveryDate) { this.promisedDeliveryDate = promisedDeliveryDate; }
 
     public LocalDate getDeliveryDate() { return deliveryDate; }
     public void setDeliveryDate(LocalDate deliveryDate) { this.deliveryDate = deliveryDate; }

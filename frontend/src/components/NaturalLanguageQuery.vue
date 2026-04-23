@@ -166,15 +166,21 @@ const buildForecastChart = (chartData) => {
   const allLabels = chartData.labels || []
   const histVals  = chartData.historicalValues || []
   const foreVals  = chartData.forecastValues   || []
-
-  // Build a combined series: historical solid, forecast dashed
-  const combined = [
-    ...histVals.map(v => v),
-    ...foreVals.map(v => v)
-  ]
+  const isMetric  = chartData.metricType === 'on_time_rate' || chartData.metricType === 'delay_rate'
 
   return {
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: isMetric
+        ? (params) => {
+            let lines = params[0].axisValue
+            params.forEach(p => {
+              if (p.value != null) lines += `<br/>${p.marker} ${p.seriesName}: ${p.value}%`
+            })
+            return lines
+          }
+        : undefined
+    },
     legend: { data: ['历史数据', '预测数据'] },
     grid: { left: 60, right: 20, top: 50, bottom: 80, containLabel: true },
     xAxis: {
@@ -182,7 +188,7 @@ const buildForecastChart = (chartData) => {
       data: allLabels,
       axisLabel: { rotate: 30, fontSize: 11 }
     },
-    yAxis: { type: 'value', name: '订单数' },
+    yAxis: { type: 'value', name: isMetric ? '%' : '订单数' },
     series: [
       {
         name: '历史数据',
@@ -228,13 +234,16 @@ const formatFilters = (filters) => {
 const hasChart = (result) =>
   result && result.chartData && result.chartType !== 'none' && result.chartData.chartType !== 'none'
 
-const buildCarrierTable = (chartData) => {
-  const labels  = chartData.labels        || []
-  const values  = chartData.values        || []
-  const delayed = chartData.delayedValues || []
-  const rates   = chartData.delayRates    || []
+const buildBreakdownTable = (chartData) => {
+  const labels    = chartData.labels        || []
+  const values    = chartData.values        || []
+  const delayed   = chartData.delayedValues || []
+  const rates     = chartData.delayRates    || []
+  const onTime    = chartData.onTimeRates   || []
+  const nameKey   = chartData.regionLabels ? 'region' : 'carrier'
   return labels.map((l, i) => ({
-    carrier: l, total: values[i] ?? '', delayed: delayed[i] ?? '', rate: rates[i] ?? '',
+    name: l, total: values[i] ?? '', delayed: delayed[i] ?? '', rate: rates[i] ?? '', onTimeRate: onTime[i] ?? '',
+    nameKey,
   }))
 }
 
@@ -321,13 +330,14 @@ watch(() => dashboardStore.filters, () => {
               </template>
             </el-alert>
           </div>
-          <!-- Carrier delay rates table -->
+          <!-- Breakdown rates table (carrier, region, or category) -->
           <div v-if="queryResult.chartData.delayRates" class="delay-rates">
-            <el-table :data="buildCarrierTable(queryResult.chartData)" size="small" border style="margin-top:12px">
-              <el-table-column prop="carrier" label="承运商" />
+            <el-table :data="buildBreakdownTable(queryResult.chartData)" size="small" border style="margin-top:12px">
+              <el-table-column prop="name" :label="queryResult.chartData.dimension === 'region' ? '地区' : queryResult.chartData.dimension === 'category' ? '品类' : '承运商'" />
               <el-table-column prop="total" label="总订单" />
               <el-table-column prop="delayed" label="延误订单" />
               <el-table-column prop="rate" label="延误率" />
+              <el-table-column prop="onTimeRate" label="准时率" />
             </el-table>
           </div>
           <!-- KPI summary -->

@@ -7,15 +7,23 @@ public class CarrierBreakdown {
     private Long totalOrders;
     private Long delayedOrders;
     private BigDecimal delayRate; // percentage
+    private BigDecimal onTimeRate; // percentage
 
     // Constructors
     public CarrierBreakdown() {}
 
     public CarrierBreakdown(String carrier, Long totalOrders, Long delayedOrders, BigDecimal delayRate) {
+        this(carrier, totalOrders, delayedOrders, delayRate,
+             delayRate != null ? BigDecimal.valueOf(100).subtract(delayRate) : BigDecimal.ZERO);
+    }
+
+    public CarrierBreakdown(String carrier, Long totalOrders, Long delayedOrders,
+                            BigDecimal delayRate, BigDecimal onTimeRate) {
         this.carrier = carrier;
         this.totalOrders = totalOrders;
         this.delayedOrders = delayedOrders;
         this.delayRate = delayRate;
+        this.onTimeRate = onTimeRate;
     }
 
     // Getters and setters
@@ -30,5 +38,8 @@ public class CarrierBreakdown {
 
     public BigDecimal getDelayRate() { return delayRate; }
     public void setDelayRate(BigDecimal delayRate) { this.delayRate = delayRate; }
+
+    public BigDecimal getOnTimeRate() { return onTimeRate; }
+    public void setOnTimeRate(BigDecimal onTimeRate) { this.onTimeRate = onTimeRate; }
 }
 
